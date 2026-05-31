@@ -5,7 +5,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 COPY . .
-RUN pip install --no-cache-dir -e . --no-build-isolation
+RUN pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -e .
 
 EXPOSE 8080
 

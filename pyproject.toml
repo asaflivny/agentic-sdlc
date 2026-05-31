@@ -18,5 +18,5 @@ dependencies = [
 asdlc-replay = "replay:main"
 
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
