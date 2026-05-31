@@ -15,6 +15,7 @@ class CodeReviewAgent(BaseAgent):
         self._register_tool(git_tools.FETCH_DIFF, git_tools.fetch_diff)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
         self._register_tool(git_tools.LIST_FILES, git_tools.list_changed_files)
+        self._register_tool(git_tools.FILE_HISTORY, git_tools.analyze_file_history)
 
     def get_system_prompt(self) -> str:
         return """You are a senior software engineer performing a code review on a git push.

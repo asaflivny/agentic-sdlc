@@ -107,8 +107,37 @@ LIST_FILES = ToolDefinition(
     ],
 )
 
+async def analyze_file_history(repo_url: str, file_path: str, max_commits: int = 10) -> ToolResult:
+    git_dir = _resolve_git_dir(repo_url)
+    if not git_dir:
+        return ToolResult("", f"Cannot resolve repo at: {repo_url}", is_error=True)
+    try:
+        n = max(1, min(max_commits, 30))
+        output = await _git(
+            ["log", f"-{n}", "--follow", "-p", "--", file_path],
+            git_dir=git_dir,
+        )
+        return ToolResult("", output[:25000])
+    except RuntimeError as e:
+        return ToolResult("", str(e), is_error=True)
+
+
+FILE_HISTORY = ToolDefinition(
+    name="analyze_file_history",
+    description=(
+        "Get the recent git commit history (with diffs) for a specific file. "
+        "Useful for understanding why code was written a certain way or spotting regression patterns."
+    ),
+    parameters=[
+        ToolParameter("repo_url", "string", "Local path or URL to the git repository"),
+        ToolParameter("file_path", "string", "Path to the file within the repository"),
+        ToolParameter("max_commits", "integer", "Maximum number of commits to return (1-30, default 10)", required=False),
+    ],
+)
+
 EXECUTORS = {
     FETCH_DIFF.name: fetch_diff,
     GET_FILE.name: get_file_content,
     LIST_FILES.name: list_changed_files,
+    FILE_HISTORY.name: analyze_file_history,
 }
