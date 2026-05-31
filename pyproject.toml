@@ -17,6 +17,10 @@ dependencies = [
 [project.scripts]
 asdlc-replay = "replay:main"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agents*", "models*", "workflows*", "tools*"]
+
 [build-system]
 requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
