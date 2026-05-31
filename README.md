@@ -92,10 +92,42 @@ Replay a saved push event JSON against the server and poll for results:
 
 ```sh
 asdlc-replay push_event.json
-asdlc-replay push_event.json --url http://localhost:8080/git/push --secret mysecret
+asdlc-replay push_event.json --url http://localhost:9090/git/push --secret mysecret
 ```
 
 ## Setup
+
+### Docker (recommended)
+
+**Requirements:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin.
+
+```sh
+# Start the server and Ollama sidecar
+docker compose up --build
+
+# Pull the model (first time only — in a separate terminal)
+docker compose exec ollama ollama pull qwen2.5-coder:7b
+```
+
+The server is now live at **http://localhost:9090**.
+
+On subsequent runs `--build` is optional unless you changed code:
+
+```sh
+docker compose up
+```
+
+**Mounting local repos** — git tools read repos from the container filesystem. Set `REPOS_ROOT` to the directory on your host that contains your cloned repos:
+
+```sh
+REPOS_ROOT=/path/to/your/repos docker compose up
+```
+
+Repos are mounted read-only at `/repos` inside the container. Use `/repos/<repo-name>` as the `clone_url` in webhook payloads.
+
+---
+
+### Local (without Docker)
 
 **Requirements:** Python 3.11+, [Ollama](https://ollama.com) running locally with `qwen2.5-coder:7b` pulled.
 
@@ -105,7 +137,7 @@ ollama pull qwen2.5-coder:7b
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-uvicorn main:app --port 8080
+uvicorn main:app --port 9090
 ```
 
 **Optional — HMAC signature validation:**
@@ -129,7 +161,7 @@ Write a `.git/hooks/pre-push` script that POSTs a GitHub-compatible push payload
 #!/usr/bin/env bash
 set -euo pipefail
 
-WEBHOOK_URL="${GIT_WEBHOOK_URL:-http://localhost:8080/git/push}"
+WEBHOOK_URL="${GIT_WEBHOOK_URL:-http://localhost:9090/git/push}"
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
 REMOTE_URL=$(git remote get-url "${1:-origin}" 2>/dev/null || echo "")
 PUSHER_NAME=$(git config user.name)
