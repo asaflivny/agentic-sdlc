@@ -10,6 +10,10 @@ A FastAPI webhook server that automatically analyzes git pushes using local LLM 
 ├── main.py                         # FastAPI app, webhook endpoint, background task dispatch
 ├── config.py                       # Pydantic settings + defaults from .env
 ├── security.py                     # HMAC-SHA256 signature verification
+├── store.py                        # WorkflowStore — SQLite persistence for workflow results
+├── replay.py                       # asdlc-replay CLI — replay a push event JSON against the server
+├── templates/
+│   └── dashboard.html              # HTML dashboard served at GET /
 ├── models/
 │   ├── events.py                   # PushEvent, Commit, Repository, Pusher models
 │   └── results.py                  # Finding, AgentResult, WorkflowResult, AgentContext
@@ -17,13 +21,15 @@ A FastAPI webhook server that automatically analyzes git pushes using local LLM 
 │   ├── base.py                     # BaseAgent (agentic loop with tool calling)
 │   ├── code_reviewer.py            # CodeReviewAgent (bugs, logic, best practices)
 │   ├── security_analyst.py         # SecurityAnalystAgent (OWASP, secrets, crypto)
-│   └── performance_analyst.py      # PerformanceAnalystAgent (algorithms, I/O, memory)
+│   ├── performance_analyst.py      # PerformanceAnalystAgent (algorithms, I/O, memory)
+│   ├── dep_auditor.py              # DependencyAuditorAgent (OSV.dev CVE checks, no LLM)
+│   └── test_coverage.py            # TestCoverageAgent (flags modified files with no test)
 ├── workflows/
 │   ├── base.py                     # WorkflowDefinition, AgentSpec, ExecutionMode
 │   ├── router.py                   # WorkflowRouter with BranchPatternRule and FilePatternRule
 │   ├── orchestrator.py             # WorkflowOrchestrator (sequential/parallel execution)
 │   └── definitions/
-│       ├── full_review.py          # All 3 agents, sequential (main/master/release/*)
+│       ├── full_review.py          # All 5 agents, sequential (main/master/release/*)
 │       ├── security_focus.py       # Security + performance, parallel (sensitive files)
 │       └── quick_review.py         # Code reviewer only, can delegate (default)
 ├── tools/
@@ -215,14 +221,12 @@ See README.md "Known limitations" section for user-facing issues. Additional dev
 
 1. **Parallel execution** — security_focus runs 2 agents in parallel; watch CPU/memory if agents are heavy
 2. **Diff size** — diffs are capped at 30KB; if you're seeing "truncated" messages in logs, the diff was too large
-3. **Timeout tuning** — AGENT_TIMEOUT_SECONDS (default 180s) applies per agent; sequential workflows with 3 agents can take up to 9 minutes
+3. **Timeout tuning** — AGENT_TIMEOUT_SECONDS (default 180s) applies per agent; sequential workflows with 5 agents can take up to 15 minutes
 4. **Model selection** — `qwen2.5-coder:7b` is small and fast (~8GB VRAM); try `qwen2.5:32b` or `neural-chat` for better quality at higher cost
 
 ## Future Enhancements
 
-- [ ] Persistence layer (database, S3, webhook callbacks)
 - [ ] Result notifications (Slack, email, PR comments)
 - [ ] Multiple model support (fallback, specialized)
 - [ ] Context compression (summarize long findings for sequential mode)
 - [ ] Pluggable rules engine (more flexible routing)
-- [ ] Telemetry dashboard (findings over time, agent performance)

@@ -78,6 +78,12 @@ GET /results                       list recent runs (optional: ?repo=&branch=&li
 GET /results/{run_id}              full WorkflowResult JSON for a specific run
 ```
 
+### Dashboard
+
+```
+GET /                              HTML dashboard — recent runs with findings summary
+```
+
 ### Observability
 
 ```
@@ -232,6 +238,7 @@ All settings can be overridden via environment variables or a `.env` file:
 | `WEBHOOK_SECRET` | _(empty)_ | HMAC secret — if set, all requests must be signed |
 | `RESULT_WEBHOOK_URL` | _(empty)_ | POST WorkflowResult JSON here after each run |
 | `DB_PATH` | `asdlc.db` | SQLite database path |
+| `API_KEY` | _(empty)_ | Bearer token required on `/results`, `/metrics` — if unset, no auth |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
 ## Running tests
@@ -310,6 +317,5 @@ Git tools work on local filesystem paths. In sequential workflows, agents can ex
 
 - **Context truncation** — in sequential mode, prior-agent findings are passed as context capped at 2000 chars. Long findings JSON can be truncated mid-object, causing subsequent agents to miss prior context.
 - **Findings parsing** — agents are prompted to emit `---FINDINGS---` before JSON, but the model sometimes emits bare blocks or tool-call-shaped responses, which results in 0 parsed findings for that agent.
-- **No persistence** — results are logged to stdout only; there is no database, dashboard, or notification integration.
 - **Local repos only** — git tools resolve paths on the local filesystem; remote URLs are not cloned.
 - **Timeout applies per agent** — long-running agents (especially in sequential workflows) may timeout at 180s, preventing downstream agents from running.
