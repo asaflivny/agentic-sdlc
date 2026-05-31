@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>asdlc — Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+    background: #0d1117; color: #c9d1d9; min-height: 100vh; padding: 2rem 2.5rem;
+    font-size: 14px;
+  }
+  header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+  h1 { font-size: 1.3rem; color: #58a6ff; letter-spacing: -0.02em; }
+  .subtitle { color: #484f58; font-size: 0.8rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; padding: 0.45rem 0.8rem;
+    border-bottom: 1px solid #21262d;
+    color: #6e7681; font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #161b22; vertical-align: middle; }
+  tr:hover td { background: #161b22; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .mono { color: #8b949e; font-size: 0.8rem; }
+  .repo { font-weight: 600; color: #e6edf3; }
+  .branch { color: #79c0ff; font-size: 0.8rem; }
+  .workflow { color: #d2a8ff; font-size: 0.8rem; }
+  .badge {
+    display: inline-block; padding: 0.15rem 0.5rem;
+    border-radius: 10px; font-size: 0.75rem; font-weight: 700;
+    min-width: 2rem; text-align: center;
+  }
+  .n0   { background: #21262d; color: #484f58; }
+  .n-ok { background: #1a3626; color: #3fb950; }
+  .n-md { background: #3b2a1a; color: #d29922; }
+  .n-hi { background: #3b1a1a; color: #f85149; }
+  .run-id { font-size: 0.75rem; font-family: inherit; color: #6e7681; }
+  .run-id:hover { color: #58a6ff; }
+  .empty { text-align: center; padding: 5rem; color: #484f58; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.35rem; }
+  .dot-ok  { background: #3fb950; }
+  .dot-md  { background: #d29922; }
+  .dot-hi  { background: #f85149; }
+  .dot-nil { background: #484f58; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ asdlc</h1>
+  <span class="subtitle">recent workflow runs — auto-refreshes every 30s</span>
+</header>
+
+{% if runs %}
+<table>
+  <thead>
+    <tr>
+      <th>Run ID</th>
+      <th>Repo / Branch</th>
+      <th>Workflow</th>
+      <th>Findings</th>
+      <th>Started (UTC)</th>
+      <th>Duration</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    {% set n = r.findings %}
+    {% if n == 0 %}
+      {% set badge_cls = "n0" %}{% set dot_cls = "dot-nil" %}
+    {% elif n <= 2 %}
+      {% set badge_cls = "n-ok" %}{% set dot_cls = "dot-ok" %}
+    {% elif n <= 5 %}
+      {% set badge_cls = "n-md" %}{% set dot_cls = "dot-md" %}
+    {% else %}
+      {% set badge_cls = "n-hi" %}{% set dot_cls = "dot-hi" %}
+    {% endif %}
+    {% set dur = r.duration_seconds %}
+    {% if dur is none %}
+      {% set dur_str = "—" %}
+    {% elif dur >= 60 %}
+      {% set dur_str = (dur // 60)|int ~ "m " ~ (dur % 60)|int ~ "s" %}
+    {% else %}
+      {% set dur_str = dur ~ "s" %}
+    {% endif %}
+    <tr>
+      <td><a class="run-id" href="/results/{{ r.run_id }}">{{ r.run_id[:8] }}</a></td>
+      <td>
+        <span class="repo">{{ r.repo }}</span>
+        <br><span class="branch">{{ r.branch }}</span>
+      </td>
+      <td><span class="workflow">{{ r.workflow }}</span></td>
+      <td>
+        <span class="dot {{ dot_cls }}"></span>
+        <span class="badge {{ badge_cls }}">{{ n }}</span>
+      </td>
+      <td class="mono">{{ r.started_at[:19].replace("T", " ") }}</td>
+      <td class="mono">{{ dur_str }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No runs yet.<br>Push to a connected repo to trigger the first analysis.</div>
+{% endif %}
+
+<script>setTimeout(() => location.reload(), 30000);</script>
+</body>
+</html>
