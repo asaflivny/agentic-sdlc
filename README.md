@@ -11,6 +11,8 @@ Every `git push` to a connected repo triggers a workflow that dispatches one or 
 | Code Reviewer | Bugs, logic errors, best practices, missing error handling |
 | Security Analyst | OWASP Top 10, exposed secrets, weak crypto, injection risks |
 | Performance Analyst | Algorithmic inefficiency, N+1 queries, memory leaks, blocking I/O |
+| Dependency Auditor | Checks added/changed packages against OSV.dev for known CVEs (no LLM needed) |
+| Test Coverage Checker | Flags modified Python files with no corresponding test file |
 
 Agents run sequentially or in parallel depending on the workflow:
 
@@ -25,7 +27,7 @@ The router picks a workflow automatically based on the push:
 
 | Trigger | Workflow |
 |---|---|
-| Push to `main`, `master`, or `release/*` | Full review — all three agents, sequential |
+| Push to `main`, `master`, or `release/*` | Full review — all five agents, sequential |
 | Changed files match secrets/auth/cert patterns | Security focus — security + performance, parallel |
 | Everything else | Quick review — code reviewer only, can sub-delegate |
 
@@ -45,13 +47,16 @@ POST /git/push
                     └── delegate_to_agent   sub-agent delegation (quick_review only)
 ```
 
-## API Response
+## API
+
+### Webhook (push ingestion)
 
 The webhook returns immediately with a 202 (Accepted) response while the analysis runs in the background:
 
 ```json
 {
   "status": "accepted",
+  "run_id": "a3f1c2d4-...",
   "workflow": "full_review",
   "repo": "my-app",
   "branch": "main",
@@ -64,7 +69,31 @@ Each finding has:
 - `severity` — one of: `critical`, `high`, `medium`, `low`, `info`
 - `file_path`, `line_number` — optional location hints
 
-Results are logged to stdout in JSON format. There is no persistence layer — findings are not stored.
+### Results API
+
+Findings are persisted to SQLite and queryable via REST:
+
+```
+GET /results                       list recent runs (optional: ?repo=&branch=&limit=)
+GET /results/{run_id}              full WorkflowResult JSON for a specific run
+```
+
+### Observability
+
+```
+GET /healthz                       always 200 — liveness probe
+GET /readyz                        200 if Ollama is reachable, 503 otherwise
+GET /metrics                       Prometheus text — findings_total, agent_duration, timeouts, errors
+```
+
+### Replay CLI
+
+Replay a saved push event JSON against the server and poll for results:
+
+```sh
+asdlc-replay push_event.json
+asdlc-replay push_event.json --url http://localhost:8080/git/push --secret mysecret
+```
 
 ## Setup
 
@@ -159,10 +188,18 @@ All settings can be overridden via environment variables or a `.env` file:
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Model to use for all agents |
-| `WEBHOOK_SECRET` | _(empty)_ | HMAC secret — if set, all requests must be signed |
+| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default model for all agents |
+| `CODE_REVIEW_MODEL` | _(OLLAMA_MODEL)_ | Override model for code reviewer |
+| `SECURITY_MODEL` | _(OLLAMA_MODEL)_ | Override model for security analyst |
+| `PERFORMANCE_MODEL` | _(OLLAMA_MODEL)_ | Override model for performance analyst |
+| `DEP_AUDIT_MODEL` | _(OLLAMA_MODEL)_ | Override model for dependency auditor |
+| `TEST_COVERAGE_MODEL` | _(OLLAMA_MODEL)_ | Override model for test coverage checker |
 | `AGENT_TIMEOUT_SECONDS` | `180` | Per-agent timeout |
 | `MAX_TOKENS` | `4096` | Max tokens per LLM response |
+| `MAX_CONCURRENT_RUNS` | `3` | Max simultaneous workflow runs |
+| `WEBHOOK_SECRET` | _(empty)_ | HMAC secret — if set, all requests must be signed |
+| `RESULT_WEBHOOK_URL` | _(empty)_ | POST WorkflowResult JSON here after each run |
+| `DB_PATH` | `asdlc.db` | SQLite database path |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
 ## Running tests
