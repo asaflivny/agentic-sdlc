@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -7,8 +6,10 @@ from openai import AsyncOpenAI
 
 from agents.base import BaseAgent
 from agents.code_reviewer import CodeReviewAgent
-from agents.security_analyst import SecurityAnalystAgent
+from agents.dep_auditor import DepAuditAgent
 from agents.performance_analyst import PerformanceAnalystAgent
+from agents.security_analyst import SecurityAnalystAgent
+from agents.test_coverage import TestCoverageAgent
 from config import Settings
 from models.events import PushEvent
 from models.results import AgentContext, AgentResult, WorkflowResult
@@ -22,6 +23,8 @@ AGENT_REGISTRY: dict[str, type[BaseAgent]] = {
     CodeReviewAgent.name: CodeReviewAgent,
     SecurityAnalystAgent.name: SecurityAnalystAgent,
     PerformanceAnalystAgent.name: PerformanceAnalystAgent,
+    DepAuditAgent.name: DepAuditAgent,
+    TestCoverageAgent.name: TestCoverageAgent,
 }
 
 
@@ -53,6 +56,7 @@ class WorkflowOrchestrator:
         else:
             results = await self._run_sequential(agents, context)
 
+        results = self._deduplicate_findings(results)
         completed_at = datetime.now(timezone.utc)
         total_findings = sum(len(r.findings) for r in results)
         logger.info(
@@ -92,14 +96,7 @@ class WorkflowOrchestrator:
             result = await self._run_with_timeout(agent, context)
             results.append(result)
             if result.status == "success":
-                findings_json = (
-                    json.dumps([f.model_dump() for f in result.findings], indent=2)
-                    if result.findings else "[]"
-                )
-                enrichment = (
-                    f"\n\n{agent.display_name} completed ({len(result.findings)} finding(s)).\n"
-                    f"Structured findings:\n```json\n{findings_json}\n```"
-                )
+                enrichment = self._format_context_enrichment(agent.display_name, result)
                 context = context.model_copy(update={
                     "additional_context": context.additional_context + enrichment
                 })
@@ -120,6 +117,30 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.exception("agent=%s failed: %s", agent.name, e)
             return AgentResult(agent_name=agent.name, status="error", summary=str(e))
+
+    def _deduplicate_findings(self, results: list[AgentResult]) -> list[AgentResult]:
+        """Remove duplicate findings across agents (same title + file_path, keep first seen)."""
+        seen: set[tuple] = set()
+        deduped = []
+        for r in results:
+            unique = []
+            for f in r.findings:
+                key = (f.title.lower().strip(), f.file_path or "")
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(f)
+                else:
+                    logger.debug("dedup: dropped duplicate finding '%s' from %s", f.title, r.agent_name)
+            deduped.append(r.model_copy(update={"findings": unique}))
+        return deduped
+
+    def _format_context_enrichment(self, agent_display_name: str, result: AgentResult) -> str:
+        """Build a compact finding summary safe to pass as sequential context."""
+        lines = [f"\n\n{agent_display_name} completed ({len(result.findings)} finding(s))."]
+        for f in result.findings:
+            loc = f" ({f.file_path}:{f.line_number})" if f.file_path else ""
+            lines.append(f"  [{f.severity.upper()}] {f.title}{loc} — {f.recommendation or f.description[:120]}")
+        return "\n".join(lines)
 
     async def _fetch_diff(self, event: PushEvent) -> str:
         repo_url = event.repository.clone_url

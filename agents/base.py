@@ -86,11 +86,12 @@ class BaseAgent(ABC):
         logger.info("=== [%s] SYSTEM PROMPT ===\n%s", self.name, system_prompt)
         logger.info("=== [%s] USER INPUT ===\n%s", self.name, initial_message)
 
+        MAX_TURNS = 10
         turn = 0
-        while True:
+        while turn < MAX_TURNS:
             turn += 1
             kwargs = dict(
-                model=self.config.ollama_model,
+                model=self.config.model_for_agent(self.name),
                 messages=[{"role": "system", "content": system_prompt}, *messages],
                 max_tokens=self.config.max_tokens,
             )
@@ -138,6 +139,8 @@ class BaseAgent(ABC):
             else:
                 final_text = msg.content or ""
                 break
+        else:
+            logger.warning("agent=%s hit max_turns=%d, stopping", self.name, MAX_TURNS)
 
         findings = self._parse_findings(final_text)
         logger.info("agent=%s findings=%d tokens=%d", self.name, len(findings), total_tokens)
@@ -183,6 +186,13 @@ class BaseAgent(ABC):
     def _try_parse_findings_json(self, text: str) -> list[Finding] | None:
         try:
             data = json.loads(text.strip())
+            if isinstance(data, dict):
+                for key in ("findings", "results", "issues", "vulnerabilities"):
+                    if isinstance(data.get(key), list):
+                        data = data[key]
+                        break
+                else:
+                    return None
             if not isinstance(data, list):
                 return None
             return [Finding(**f) for f in data]
