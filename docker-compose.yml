@@ -2,7 +2,7 @@ services:
   asdlc:
     build: .
     ports:
-      - "8080:8080"
+      - "9090:8080"
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
