@@ -12,7 +12,12 @@ Every `git push` to a connected repo triggers a workflow that dispatches one or 
 | Security Analyst | OWASP Top 10, exposed secrets, weak crypto, injection risks |
 | Performance Analyst | Algorithmic inefficiency, N+1 queries, memory leaks, blocking I/O |
 
-Agents run sequentially or in parallel depending on the workflow. In sequential mode each agent receives the findings of the previous one as context. Agents can also delegate to each other as sub-agents.
+Agents run sequentially or in parallel depending on the workflow:
+
+- **Sequential** (full_review, quick_review) — agents run one at a time; each receives prior agent findings as additional context
+- **Parallel** (security_focus) — agents run concurrently with independent analysis
+
+Agents can also delegate to each other as sub-agents (used in quick_review to escalate concerns).
 
 ## Workflow routing
 
@@ -40,7 +45,26 @@ POST /git/push
                     └── delegate_to_agent   sub-agent delegation (quick_review only)
 ```
 
-Results are logged to stdout. There is no persistence layer — findings are not stored.
+## API Response
+
+The webhook returns immediately with a 202 (Accepted) response while the analysis runs in the background:
+
+```json
+{
+  "status": "accepted",
+  "workflow": "full_review",
+  "repo": "my-app",
+  "branch": "main",
+  "commits": 3
+}
+```
+
+Each finding has:
+- `title`, `description`, `recommendation` — actionable guidance
+- `severity` — one of: `critical`, `high`, `medium`, `low`, `info`
+- `file_path`, `line_number` — optional location hints
+
+Results are logged to stdout in JSON format. There is no persistence layer — findings are not stored.
 
 ## Setup
 
@@ -115,6 +139,15 @@ done
 chmod +x /path/to/your/repo/.git/hooks/pre-push
 ```
 
+Test the hook by making a commit and pushing:
+
+```sh
+git commit --allow-empty -m "test push"
+git push  # triggers the webhook to POST the payload
+```
+
+Watch the asdlc server logs to see the analysis run.
+
 ## Test repo
 
 [inventory-tracker](../inventory-tracker) is a dummy repo wired up to this server for testing. It has the hook installed and a bare remote at `../inventory-tracker.git`.
@@ -140,9 +173,74 @@ pytest tests/
 
 The test suite covers HMAC signature validation (7 cases).
 
+## Understanding Agent Delegation
+
+In the `quick_review` workflow, the code reviewer can delegate to security and performance specialists if needed:
+
+```
+CodeReviewAgent (initial analysis)
+  ├── Detects security concern → delegates to SecurityAnalystAgent
+  ├── Detects performance issue → delegates to PerformanceAnalystAgent
+  └── Returns aggregated findings from all three
+```
+
+Delegation happens via tool calling within the agent's agentic loop. The delegated agent operates on the same git diff but can use its specialized system prompt and tools.
+
+## Agent Execution Status
+
+Each agent reports its execution status:
+- `success` — analysis completed normally
+- `error` — uncaught exception during tool execution
+- `timeout` — exceeded `AGENT_TIMEOUT_SECONDS` (default 180s)
+
+Timeout or error status prevents that agent from contributing findings to the workflow result.
+
+## Reading the Logs
+
+When a push is received, you'll see output like:
+
+```
+INFO main push parsed OK repo=my-app branch=main pusher=Alice commits=2
+INFO main routed repo=my-app branch=main → workflow=full_review (rule=main_branch)
+INFO main workflow=full_review repo=my-app branch=main mode=sequential agents=3
+INFO code_reviewer === [code_reviewer] SYSTEM PROMPT ===
+      (system prompt here)
+INFO code_reviewer === [code_reviewer] USER INPUT ===
+      (repository context, diff, etc.)
+INFO code_reviewer === [code_reviewer] TURN 1 ===
+      (LLM request/response details)
+INFO code_reviewer Agent turn 1 tool calls: ['fetch_git_diff']
+INFO code_reviewer result: 0 findings
+INFO main workflow=full_review done duration=45.2s total_findings=3
+INFO main
+[FULL REVIEW SUMMARY]
+...
+```
+
+Key log lines:
+- `routed → workflow=X` — which workflow was picked and why
+- `TURN N` — which agentic loop iteration
+- `tool calls` — which tools the agent used
+- `result: N findings` — findings parsed from that agent
+- `total_findings=N` — aggregate count across all agents in the workflow
+
+## Git Tools Available to Agents
+
+All agents have access to these tools during analysis:
+
+| Tool | Purpose |
+|---|---|
+| `fetch_git_diff` | Get unified diff between two commits (capped at 30KB) |
+| `get_file_content` | View a specific file at a given ref (capped at 20KB) |
+| `list_changed_files` | List files with A (Added), M (Modified), D (Deleted) status |
+| `delegate_to_agent` | Call another agent for specialized analysis (quick_review only) |
+
+Git tools work on local filesystem paths. In sequential workflows, agents can examine the full diff early on, then request specific files for deeper analysis.
+
 ## Known limitations
 
-- **Context truncation** — in sequential mode, prior-agent findings are passed as a string capped at 2000 chars. Long findings JSON can be truncated mid-object.
-- **Findings parsing** — agents are prompted to emit `---FINDINGS---` before a JSON array, but the model sometimes emits bare JSON blocks or tool-call-shaped responses, which results in 0 parsed findings for that run.
-- **No persistence** — results are logged only; there is no storage, dashboard, or notification integration.
+- **Context truncation** — in sequential mode, prior-agent findings are passed as context capped at 2000 chars. Long findings JSON can be truncated mid-object, causing subsequent agents to miss prior context.
+- **Findings parsing** — agents are prompted to emit `---FINDINGS---` before JSON, but the model sometimes emits bare blocks or tool-call-shaped responses, which results in 0 parsed findings for that agent.
+- **No persistence** — results are logged to stdout only; there is no database, dashboard, or notification integration.
 - **Local repos only** — git tools resolve paths on the local filesystem; remote URLs are not cloned.
+- **Timeout applies per agent** — long-running agents (especially in sequential workflows) may timeout at 180s, preventing downstream agents from running.
