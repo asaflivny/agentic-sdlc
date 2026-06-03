@@ -31,5 +31,8 @@ htmlcov/
 *.swp
 *.swo
 
-# Claude Code
+# Claude Code — ignore personal/local state but commit shared project config
 .claude/
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/**

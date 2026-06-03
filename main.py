@@ -141,7 +141,7 @@ async def git_push(event: PushEvent, background_tasks: BackgroundTasks):
 async def _run_workflow(run_id: str, workflow, event: PushEvent):
     async with _run_semaphore:
         try:
-            result = await orchestrator.run(workflow, event)
+            result = await orchestrator.run(workflow, event, run_id=run_id)
             total_findings = sum(len(r.findings) for r in result.agent_results)
             _metrics["runs_total"] += 1
             _metrics["findings_total"] += total_findings

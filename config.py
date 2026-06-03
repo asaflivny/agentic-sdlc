@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     max_tokens: int = 4096
     max_concurrent_runs: int = 3
 
+    # LangGraph agent loop
+    agent_recursion_limit: int = 25  # super-steps per agent subgraph (call_model<->tools)
+    enable_checkpointing: bool = False  # persist graph state for resumable runs
+    checkpoint_db_path: str = "asdlc_checkpoints.db"
+
     webhook_secret: str = ""
     result_webhook_url: str = ""
     slack_webhook_url: str = ""
@@ -27,6 +32,14 @@ class Settings(BaseSettings):
 
     db_path: str = "asdlc.db"
     log_level: str = "INFO"
+
+    @property
+    def ollama_native_url(self) -> str:
+        """ChatOllama uses the native Ollama API; strip the OpenAI-compat /v1 suffix."""
+        url = self.ollama_base_url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[: -len("/v1")]
+        return url
 
     def model_for_agent(self, agent_name: str) -> str:
         overrides = {

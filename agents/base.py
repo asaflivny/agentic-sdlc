@@ -1,16 +1,27 @@
-import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Annotated, Callable, TypedDict
 
-from openai import AsyncOpenAI
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.errors import GraphRecursionError
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 
 from config import Settings
-from models.results import AgentContext, AgentResult, Finding
-from tools.base import ToolDefinition, ToolResult
+from models.results import AgentContext, AgentResult, Finding, FindingList
+from tools.base import ToolDefinition
+from tools.langchain_adapter import to_langchain_tool
 
 logger = logging.getLogger(__name__)
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+    findings: list[Finding]
+    summary: str
 
 
 class BaseAgent(ABC):
@@ -18,8 +29,8 @@ class BaseAgent(ABC):
     display_name: str
     description: str
 
-    def __init__(self, client: AsyncOpenAI, config: Settings):
-        self.client = client
+    def __init__(self, llm: BaseChatModel, config: Settings):
+        self.llm = llm
         self.config = config
         self._tool_definitions: list[ToolDefinition] = []
         self._tool_registry: dict[str, Callable] = {}
@@ -58,17 +69,59 @@ class BaseAgent(ABC):
         parts.append("\nPlease perform your analysis now.")
         return "\n".join(parts)
 
-    async def _execute_tool(self, name: str, tool_call_id: str, arguments: dict) -> ToolResult:
-        executor = self._tool_registry.get(name)
-        if not executor:
-            return ToolResult(tool_call_id, f"Unknown tool: {name}", is_error=True)
-        try:
-            result = await executor(**arguments)
-            result.tool_call_id = tool_call_id
-            return result
-        except Exception as e:
-            logger.exception("tool %s failed", name)
-            return ToolResult(tool_call_id, str(e), is_error=True)
+    # ------------------------------------------------------------------
+    # LangGraph subgraph: call_model <-> tools, then structured extraction
+    # ------------------------------------------------------------------
+
+    def _build_graph(self, lc_tools: list):
+        llm_with_tools = self.llm.bind_tools(lc_tools) if lc_tools else self.llm
+        structured_llm = self.llm.with_structured_output(FindingList)
+
+        async def call_model(state: AgentState) -> dict:
+            response = await llm_with_tools.ainvoke(state["messages"])
+            return {"messages": [response]}
+
+        async def extract_findings(state: AgentState) -> dict:
+            summary = ""
+            for m in reversed(state["messages"]):
+                if isinstance(m, AIMessage) and m.content:
+                    summary = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+            try:
+                extraction: FindingList = await structured_llm.ainvoke([
+                    SystemMessage(content=(
+                        "Extract every concrete issue from the analysis below as structured "
+                        "findings. Preserve titles, severities, file paths, line numbers, and "
+                        "recommendations. If there are no issues, return an empty list."
+                    )),
+                    HumanMessage(content=summary or "No analysis was produced."),
+                ])
+                findings = list(extraction.findings)
+            except Exception as e:
+                logger.warning("agent=%s structured extraction failed: %s", self.name, e)
+                findings = []
+            return {"findings": findings, "summary": summary}
+
+        def should_continue(state: AgentState) -> str:
+            last = state["messages"][-1]
+            if isinstance(last, AIMessage) and last.tool_calls:
+                return "tools"
+            return "extract"
+
+        builder = StateGraph(AgentState)
+        builder.add_node("call_model", call_model)
+        builder.add_node("extract", extract_findings)
+        builder.add_edge(START, "call_model")
+        if lc_tools:
+            builder.add_node("tools", ToolNode(lc_tools))
+            builder.add_conditional_edges(
+                "call_model", should_continue, {"tools": "tools", "extract": "extract"}
+            )
+            builder.add_edge("tools", "call_model")
+        else:
+            builder.add_edge("call_model", "extract")
+        builder.add_edge("extract", END)
+        return builder.compile()
 
     async def run(self, context: AgentContext) -> AgentResult:
         start = time.monotonic()
@@ -76,125 +129,36 @@ class BaseAgent(ABC):
         for at in self._agent_tools:
             at.bind_context(context)
 
-        initial_message = self._build_initial_message(context)
-        system_prompt = self.get_system_prompt()
-        messages = [{"role": "user", "content": initial_message}]
-        tools = [d.to_openai_schema() for d in self._tool_definitions] or None
-        final_text = ""
-        total_tokens = 0
+        lc_tools = [to_langchain_tool(d, self._tool_registry[d.name]) for d in self._tool_definitions]
+        graph = self._build_graph(lc_tools)
 
+        system_prompt = self.get_system_prompt()
+        initial_message = self._build_initial_message(context)
         logger.info("=== [%s] SYSTEM PROMPT ===\n%s", self.name, system_prompt)
         logger.info("=== [%s] USER INPUT ===\n%s", self.name, initial_message)
 
-        MAX_TURNS = 10
-        turn = 0
-        while turn < MAX_TURNS:
-            turn += 1
-            kwargs = dict(
-                model=self.config.model_for_agent(self.name),
-                messages=[{"role": "system", "content": system_prompt}, *messages],
-                max_tokens=self.config.max_tokens,
+        init_state: AgentState = {
+            "messages": [SystemMessage(content=system_prompt), HumanMessage(content=initial_message)],
+            "findings": [],
+            "summary": "",
+        }
+
+        try:
+            final = await graph.ainvoke(
+                init_state, config={"recursion_limit": self.config.agent_recursion_limit}
             )
-            if tools:
-                kwargs["tools"] = tools
+            findings = final.get("findings", [])
+            summary = final.get("summary", "")
+        except GraphRecursionError:
+            logger.warning("agent=%s hit recursion_limit=%d", self.name, self.config.agent_recursion_limit)
+            findings, summary = [], "Agent stopped after reaching the recursion limit."
 
-            response = await self.client.chat.completions.create(**kwargs)
-            choice = response.choices[0]
-            msg = choice.message
-
-            if response.usage:
-                total_tokens += response.usage.total_tokens or 0
-
-            logger.info(
-                "=== [%s] LLM RESPONSE (turn=%d, finish=%s, tokens=%s) ===\n%s",
-                self.name, turn, choice.finish_reason,
-                response.usage.total_tokens if response.usage else "?",
-                msg.content or "(no text — tool call only)",
-            )
-
-            assistant_msg: dict = {"role": "assistant", "content": msg.content}
-            if msg.tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                    }
-                    for tc in msg.tool_calls
-                ]
-            messages.append(assistant_msg)
-
-            if choice.finish_reason == "tool_calls" and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    try:
-                        args = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
-                        args = {}
-                    result = await self._execute_tool(tc.function.name, tc.id, args)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": result.tool_call_id,
-                        "content": result.content,
-                    })
-            else:
-                final_text = msg.content or ""
-                break
-        else:
-            logger.warning("agent=%s hit max_turns=%d, stopping", self.name, MAX_TURNS)
-
-        findings = self._parse_findings(final_text)
-        logger.info("agent=%s findings=%d tokens=%d", self.name, len(findings), total_tokens)
-
+        logger.info("agent=%s findings=%d", self.name, len(findings))
         return AgentResult(
             agent_name=self.name,
             status="success",
             findings=findings,
-            summary=final_text,
+            summary=summary,
             duration_seconds=round(time.monotonic() - start, 2),
-            tokens_used=total_tokens,
+            tokens_used=0,
         )
-
-    def _parse_findings(self, text: str) -> list[Finding]:
-        import re
-        sentinel = "---FINDINGS---"
-
-        # Try sentinel-delimited block first
-        if sentinel in text:
-            json_part = text.split(sentinel, 1)[1].strip()
-            if json_part.startswith("```"):
-                json_part = json_part.split("\n", 1)[1].rsplit("```", 1)[0]
-            result = self._try_parse_findings_json(json_part)
-            if result is not None:
-                return result
-
-        # Fall back: last fenced JSON array block (model omitted sentinel)
-        for block in reversed(re.findall(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)):
-            result = self._try_parse_findings_json(block)
-            if result is not None:
-                logger.debug("agent=%s: parsed findings from fenced JSON block", self.name)
-                return result
-
-        # Last resort: find any bare JSON array in the text
-        for match in reversed(list(re.finditer(r"\[[\s\S]*?\]", text))):
-            result = self._try_parse_findings_json(match.group())
-            if result is not None:
-                logger.debug("agent=%s: parsed findings from bare JSON array", self.name)
-                return result
-
-        return []
-
-    def _try_parse_findings_json(self, text: str) -> list[Finding] | None:
-        try:
-            data = json.loads(text.strip())
-            if isinstance(data, dict):
-                for key in ("findings", "results", "issues", "vulnerabilities"):
-                    if isinstance(data.get(key), list):
-                        data = data[key]
-                        break
-                else:
-                    return None
-            if not isinstance(data, list):
-                return None
-            return [Finding(**f) for f in data]
-        except Exception:
-            return None

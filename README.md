@@ -40,7 +40,7 @@ POST /git/push
     └── verify_webhook_signature    HMAC-SHA256 (optional)
     └── WorkflowRouter              picks workflow by branch / changed files
     └── WorkflowOrchestrator        fetches diff, runs agents, aggregates results
-            └── BaseAgent           Ollama agentic loop (OpenAI-compatible tool calling)
+            └── BaseAgent           LangGraph subgraph (call_model ↔ tools → structured extract)
                     ├── fetch_git_diff      git diff between two SHAs
                     ├── get_file_content    file content at a given ref
                     ├── list_changed_files  changed file list with A/M/D status
