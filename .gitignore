@@ -31,6 +31,12 @@ htmlcov/
 *.swp
 *.swo
 
+# macOS
+.DS_Store
+
+# Database
+*.db
+
 # Claude Code — ignore personal/local state but commit shared project config
 .claude/
 !.claude/settings.json
