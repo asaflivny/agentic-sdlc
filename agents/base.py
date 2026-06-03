@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -69,6 +70,33 @@ class BaseAgent(ABC):
         parts.append("\nPlease perform your analysis now.")
         return "\n".join(parts)
 
+    @staticmethod
+    def _coerce_text_tool_call(message: AIMessage, tool_names: set[str]) -> AIMessage:
+        """Promote a tool call the model emitted as JSON *text* into a real tool_call.
+
+        qwen2.5-coder on Ollama sometimes returns a ```json {"name","arguments"}``` block in
+        the message content instead of using the native tool-calling API. Without this, the
+        graph would route straight to extraction and produce zero findings. We detect that
+        shape and attach a proper tool_call so ToolNode executes it.
+        """
+        if message.tool_calls or not isinstance(message.content, str):
+            return message
+        import re
+        import uuid
+        for block in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", message.content, re.DOTALL):
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            name, args = data.get("name"), data.get("arguments")
+            if name in tool_names and isinstance(args, dict):
+                logger.warning("agent emitted tool call as text, coercing: %s", name)
+                return AIMessage(
+                    content="",
+                    tool_calls=[{"name": name, "args": args, "id": f"text_call_{uuid.uuid4().hex[:8]}"}],
+                )
+        return message
+
     # ------------------------------------------------------------------
     # LangGraph subgraph: call_model <-> tools, then structured extraction
     # ------------------------------------------------------------------
@@ -77,8 +105,11 @@ class BaseAgent(ABC):
         llm_with_tools = self.llm.bind_tools(lc_tools) if lc_tools else self.llm
         structured_llm = self.llm.with_structured_output(FindingList)
 
+        tool_names = {t.name for t in lc_tools}
+
         async def call_model(state: AgentState) -> dict:
             response = await llm_with_tools.ainvoke(state["messages"])
+            response = self._coerce_text_tool_call(response, tool_names)
             return {"messages": [response]}
 
         async def extract_findings(state: AgentState) -> dict:

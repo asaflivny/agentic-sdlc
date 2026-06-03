@@ -81,6 +81,26 @@ def test_subgraph_returns_structured_findings():
     assert "---FINDINGS---" not in result.summary
 
 
+def test_coerce_text_tool_call_promotes_to_real_tool_call():
+    from agents.base import BaseAgent
+
+    # qwen-style: tool call emitted as a fenced JSON block in content, not native tool_calls.
+    msg = AIMessage(content='```json\n{"name": "fetch_git_diff", "arguments": {"repo_url": "r", "before_sha": "a", "after_sha": "b"}}\n```')
+    out = BaseAgent._coerce_text_tool_call(msg, {"fetch_git_diff", "get_file_content"})
+    assert len(out.tool_calls) == 1
+    assert out.tool_calls[0]["name"] == "fetch_git_diff"
+    assert out.tool_calls[0]["args"] == {"repo_url": "r", "before_sha": "a", "after_sha": "b"}
+
+
+def test_coerce_leaves_plain_analysis_untouched():
+    from agents.base import BaseAgent
+
+    msg = AIMessage(content="I reviewed the code and found a SQL injection risk.")
+    out = BaseAgent._coerce_text_tool_call(msg, {"fetch_git_diff"})
+    assert out.tool_calls == []
+    assert out is msg  # unchanged
+
+
 def test_subgraph_handles_no_findings():
     llm = FakeChatModel(
         AIMessage(content="No issues found."),

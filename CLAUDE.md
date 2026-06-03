@@ -55,7 +55,7 @@ START → call_model ──(tool_calls?)──→ tools → call_model (loop)
                   └──(no tools)────→ extract → END
 ```
 
-1. **`call_model`** — invokes `llm.bind_tools(lc_tools)` with the full message history
+1. **`call_model`** — invokes `llm.bind_tools(lc_tools)` with the full message history; after the response, `_coerce_text_tool_call` is applied to promote any tool call the model emitted as a fenced JSON block (qwen2.5-coder quirk) into a real `tool_calls` entry so `ToolNode` can execute it
 2. **`tools`** — LangGraph's built-in `ToolNode` executes tool calls; results appended as `ToolMessage`s
 3. **`extract`** — a second LLM call using `llm.with_structured_output(FindingList)` turns the agent's final prose into typed `Finding` objects; no regex parsing
 
@@ -143,6 +143,10 @@ In sequential workflows, findings are passed as a string capped at 2000 chars (`
 - Check logs for `structured extraction failed` warnings
 - Try a larger or more instruction-following model (e.g. `qwen2.5:32b`, `llama3.1:8b`)
 - Inspect the agent's `summary` field in the stored result — the prose is preserved even when extraction fails
+
+### 2a. Model Emits Tool Calls as Text
+
+`qwen2.5-coder` on Ollama sometimes emits a `\`\`\`json {"name": ..., "arguments": ...}\`\`\`` block in the message content instead of using the native tool-calling API. `_coerce_text_tool_call` in `base.py` detects this shape and promotes it to a real `tool_calls` entry so `ToolNode` executes it. Watch logs for `"agent emitted tool call as text, coercing: ..."` to confirm this path is hit.
 
 ### 3. Git Tool Failures
 
