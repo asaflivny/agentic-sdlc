@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from langchain_core.language_models import BaseChatModel
 
 from agents.base import BaseAgent
 from config import Settings
@@ -10,8 +10,8 @@ class CodeReviewAgent(BaseAgent):
     display_name = "Code Reviewer"
     description = "Reviews code for quality, correctness, maintainability, and best practices"
 
-    def __init__(self, client: AsyncOpenAI, config: Settings):
-        super().__init__(client, config)
+    def __init__(self, llm: BaseChatModel, config: Settings):
+        super().__init__(llm, config)
         self._register_tool(git_tools.FETCH_DIFF, git_tools.fetch_diff)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
         self._register_tool(git_tools.LIST_FILES, git_tools.list_changed_files)
@@ -31,18 +31,6 @@ Your responsibilities:
 Be precise: reference file names and line numbers when possible.
 Focus on what matters — skip trivial style nits unless they indicate a deeper problem.
 
-At the end of your response, output your structured findings using this exact format:
-
----FINDINGS---
-[
-  {
-    "title": "Short title of the issue",
-    "description": "Detailed explanation of the problem",
-    "severity": "critical|high|medium|low|info",
-    "file_path": "path/to/file.py or null",
-    "line_number": 42,
-    "recommendation": "How to fix it"
-  }
-]
-
-If there are no findings, output an empty array: `---FINDINGS---\n[]`"""
+Write a clear analysis. For each issue you find, state a short title, the severity
+(critical/high/medium/low/info), the file path and line number if known, what the problem
+is, and how to fix it. If you find no issues, say so explicitly."""

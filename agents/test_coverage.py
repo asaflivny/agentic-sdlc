@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from langchain_core.language_models import BaseChatModel
 
 from agents.base import BaseAgent
 from config import Settings
@@ -10,8 +10,8 @@ class TestCoverageAgent(BaseAgent):
     display_name = "Test Coverage Checker"
     description = "Checks whether changed Python files have corresponding test coverage"
 
-    def __init__(self, client: AsyncOpenAI, config: Settings):
-        super().__init__(client, config)
+    def __init__(self, llm: BaseChatModel, config: Settings):
+        super().__init__(llm, config)
         self._register_tool(git_tools.LIST_FILES, git_tools.list_changed_files)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
 
@@ -32,18 +32,7 @@ Do NOT flag:
 - Files that already have a test file at any reasonable path
 - Non-Python files
 
-At the end of your response, output your findings using this exact format:
-
----FINDINGS---
-[
-  {
-    "title": "No test file for path/to/module.py",
-    "description": "This file was added/modified with new logic but no corresponding test file was found",
-    "severity": "low",
-    "file_path": "path/to/module.py",
-    "line_number": null,
-    "recommendation": "Add tests/test_module.py covering the new functionality"
-  }
-]
-
-If all changed files have tests or do not require them, output: ---FINDINGS---\n[]"""
+Write a clear analysis. For each source file lacking a test, state a short title (e.g.
+"No test file for path/to/module.py"), severity "low", the file path, and a recommendation
+(e.g. "Add tests/test_module.py covering the new functionality"). If all changed files
+have tests or do not require them, say so explicitly."""

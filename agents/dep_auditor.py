@@ -3,10 +3,8 @@ import re
 import time
 
 import httpx
-from openai import AsyncOpenAI
 
 from agents.base import BaseAgent
-from config import Settings
 from models.results import AgentContext, AgentResult, Finding, Severity
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from langchain_core.language_models import BaseChatModel
 
 from agents.base import BaseAgent
 from config import Settings
@@ -10,8 +10,8 @@ class PerformanceAnalystAgent(BaseAgent):
     display_name = "Performance Analyst"
     description = "Analyzes code for performance bottlenecks, inefficient algorithms, and resource leaks"
 
-    def __init__(self, client: AsyncOpenAI, config: Settings):
-        super().__init__(client, config)
+    def __init__(self, llm: BaseChatModel, config: Settings):
+        super().__init__(llm, config)
         self._register_tool(git_tools.FETCH_DIFF, git_tools.fetch_diff)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
 
@@ -30,18 +30,6 @@ Your responsibilities:
 
 Focus on changes in the diff — don't speculate about code not shown.
 
-At the end of your response, output your structured findings:
-
----FINDINGS---
-[
-  {
-    "title": "Short title of the performance issue",
-    "description": "What the inefficiency is and its likely impact",
-    "severity": "high|medium|low|info",
-    "file_path": "path/to/file.py or null",
-    "line_number": 42,
-    "recommendation": "How to improve it"
-  }
-]
-
-If there are no findings, output: `---FINDINGS---\n[]`"""
+Write a clear analysis. For each issue, state a short title, the severity
+(high/medium/low/info), the file path and line number if known, what the inefficiency is
+and its likely impact, and how to improve it. If you find no issues, say so explicitly."""

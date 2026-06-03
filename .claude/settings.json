@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(.venv/bin/pytest *)",
+      "Bash(.venv/bin/uvicorn *)",
+      "Bash(.venv/bin/asdlc-replay *)",
+      "Bash(.venv/bin/ruff *)",
+      "Bash(.venv/bin/mypy *)",
+      "Bash(sqlite3 asdlc.db *)",
+      "Bash(curl http://localhost:*)",
+      "Bash(curl http://localhost:11434/*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=\"$CLAUDE_TOOL_INPUT_FILE_PATH\"; if [[ \"$file\" == *.py ]] && [[ -f .venv/bin/ruff ]]; then .venv/bin/ruff check --fix \"$file\" 2>&1 | head -20; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/asaf/Projects/agentic-sdlc/.claude/hooks/doc_staleness_check.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

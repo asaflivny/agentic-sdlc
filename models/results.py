@@ -23,6 +23,11 @@ class Finding(BaseModel):
     recommendation: str
 
 
+class FindingList(BaseModel):
+    """Container the LLM fills directly via structured output (replaces sentinel parsing)."""
+    findings: list[Finding] = []
+
+
 class AgentResult(BaseModel):
     agent_name: str
     status: Literal["success", "error", "timeout"]

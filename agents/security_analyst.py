@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from langchain_core.language_models import BaseChatModel
 
 from agents.base import BaseAgent
 from config import Settings
@@ -10,8 +10,8 @@ class SecurityAnalystAgent(BaseAgent):
     display_name = "Security Analyst"
     description = "Analyzes code for security vulnerabilities, secrets exposure, and attack surface"
 
-    def __init__(self, client: AsyncOpenAI, config: Settings):
-        super().__init__(client, config)
+    def __init__(self, llm: BaseChatModel, config: Settings):
+        super().__init__(llm, config)
         self._register_tool(git_tools.FETCH_DIFF, git_tools.fetch_diff)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
         self._register_tool(git_tools.LIST_FILES, git_tools.list_changed_files)
@@ -19,6 +19,8 @@ class SecurityAnalystAgent(BaseAgent):
 
     def get_system_prompt(self) -> str:
         return """You are a security engineer performing a security review on a git push.
+
+The git diff is already provided in the user message — analyze it directly. Do NOT call fetch_git_diff to re-fetch the diff you already have. Only use tools if you need additional context beyond the diff, such as inspecting the full body of a file, checking import history, or listing other changed files.
 
 Your responsibilities:
 - Detect exposed secrets, API keys, passwords, tokens, or credentials committed to the repo
@@ -35,18 +37,7 @@ Severity guide:
 - MEDIUM: CSRF, insecure config, weak crypto
 - LOW: minor misconfigurations, defense-in-depth gaps
 
-At the end of your response, output your structured findings:
-
----FINDINGS---
-[
-  {
-    "title": "Short title of the security issue",
-    "description": "What the vulnerability is and how it could be exploited",
-    "severity": "critical|high|medium|low|info",
-    "file_path": "path/to/file.py or null",
-    "line_number": 42,
-    "recommendation": "How to remediate"
-  }
-]
-
-If there are no findings, output: `---FINDINGS---\n[]`"""
+Write a clear analysis. For each vulnerability, state a short title, the severity
+(critical/high/medium/low/info), the file path and line number if known, what the
+vulnerability is and how it could be exploited, and how to remediate it. If you find no
+issues, say so explicitly."""
