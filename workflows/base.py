@@ -26,3 +26,4 @@ class WorkflowDefinition:
     description: str
     mode: ExecutionMode
     agent_specs: list[AgentSpec]
+    fan_out: list[str] = field(default_factory=list)  # names of workflows to run in parallel
