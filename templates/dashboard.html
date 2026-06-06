@@ -129,6 +129,38 @@
         <div class="stat-label">Avg Duration</div>
       </div>
     </div>
+
+    {% if agent_stats %}
+    <div style="margin-bottom: 2rem;">
+      <h2 style="font-size: 0.9rem; color: #6e7681; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem;">Agent Effectiveness</h2>
+      <table style="font-size: 0.85rem;">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th style="text-align: right;">Findings</th>
+            <th style="text-align: center;">Critical</th>
+            <th style="text-align: center;">High</th>
+            <th style="text-align: center;">Medium</th>
+            <th style="text-align: center;">Low</th>
+            <th style="text-align: center;">Info</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for agent in agent_stats %}
+          <tr>
+            <td style="font-weight: 500;">{{ agent.agent }}</td>
+            <td style="text-align: right; color: #58a6ff;">{{ agent.total_findings }}</td>
+            <td style="text-align: center;"><span class="sev-pill sev-critical">{{ agent.critical_count }}</span></td>
+            <td style="text-align: center;"><span class="sev-pill sev-high">{{ agent.high_count }}</span></td>
+            <td style="text-align: center;"><span class="sev-pill sev-medium">{{ agent.medium_count }}</span></td>
+            <td style="text-align: center;"><span class="sev-pill sev-low">{{ agent.low_count }}</span></td>
+            <td style="text-align: center;"><span class="sev-pill sev-info">{{ agent.info_count }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
   </div>
 
   {% if runs %}

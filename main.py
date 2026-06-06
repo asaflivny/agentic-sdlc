@@ -879,9 +879,15 @@ async def rag_browse(collection: str = "best_practices", limit: int = 100):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    runs, stats = await asyncio.gather(store.list_runs(limit=50), store.get_stats())
+    runs, stats, agent_stats = await asyncio.gather(
+        store.list_runs(limit=50),
+        store.get_stats(),
+        store.get_agent_stats()
+    )
     return templates.TemplateResponse(
-        request=request, name="dashboard.html", context={"runs": runs, "stats": stats}
+        request=request,
+        name="dashboard.html",
+        context={"runs": runs, "stats": stats, "agent_stats": agent_stats}
     )
 
 
