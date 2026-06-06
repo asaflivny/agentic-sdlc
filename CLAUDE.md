@@ -355,6 +355,8 @@ curl http://localhost:8088/readyz
 
 7. **RAG store is optional** — agents accept `rag_store=None` and gracefully degrade. If `config.rag_enabled=True` but no store is provided, tools return errors that agents can see. In production, seed the RAG store before calling `WorkflowOrchestrator`.
 
+8. **Update triggers must be enforced** — Whenever you complete work on a file listed in the "Update Triggers" table (CLAUDE.md, README.md, tests/, BACKLOG.md), update ALL corresponding targets in the same session before closing. Do not defer documentation updates to a future session. See "Definition of Done" above.
+
 ## Claude Code Agent Usage
 
 When working in this codebase, use specialized subagents as follows:
@@ -460,6 +462,21 @@ Core frameworks to check:
 4. For Ollama model updates, check [ollama.com/library](https://ollama.com/library) for new `qwen2.5-coder` or reasoning model variants.
 
 Do this proactively — don't wait to be asked.
+
+## Definition of Done
+
+**Work is not complete until ALL of the following are true:**
+
+1. **Code works** — implementation passes tests, handles edge cases, no regressions
+2. **CLAUDE.md updated** — any change to architecture, config, invariants, or behavior must update the relevant section(s)
+3. **BACKLOG.md / task tracking updated** — completed items marked ✅ or removed; new work added to backlog
+4. **Tests added/updated** — new code has corresponding test coverage; see "Update Triggers § Tests" below
+5. **README.md updated** — user-facing features, setup steps, or API changes documented
+6. **Code comments & docstrings** — added only where WHY is non-obvious (see code style rules)
+
+**Why this matters:** Previous sessions implemented GitHub PR comments, diff chunking, and structured logging but never updated BACKLOG.md. Future readers thought work was still to-do. Documentation drift = maintenance debt.
+
+**Enforcement:** Before submitting work, re-read the "Update Triggers" table below. If you changed a file listed there, you MUST update the corresponding target section in CLAUDE.md / README.md / BACKLOG.md / tests.
 
 ## Update Triggers
 
