@@ -237,7 +237,7 @@ class BaseAgent(ABC):
                     "output_tokens", 0
                 ) + response.usage_metadata.get("input_tokens", 0)
 
-            logger.info(
+            logger.debug(
                 "llm_call agent=%s turn=%d tool_calls=%s content_len=%d tokens=%d",
                 self.name,
                 turn_counter["n"],
@@ -310,7 +310,7 @@ class BaseAgent(ABC):
                 findings = []
 
             if not findings and summary and self.config.extraction_retry:
-                logger.info(
+                logger.debug(
                     "extraction_retry agent=%s summary_bytes=%d",
                     self.name,
                     len(summary),
@@ -341,7 +341,7 @@ class BaseAgent(ABC):
                             "output_tokens", 0
                         ) + retry_extraction.usage_metadata.get("input_tokens", 0)
 
-                    logger.info(
+                    logger.debug(
                         "extraction_retry_success agent=%s findings=%d",
                         self.name,
                         len(findings),
