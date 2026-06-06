@@ -149,15 +149,20 @@ uvicorn main:app --port 9090
 **Optional — HMAC signature validation:**
 
 ```sh
-# Generate a secret
-openssl rand -hex 32
+# Set up local key vault (direnv + pass)
+brew install direnv pass gnupg
+pass init <your-gpg-key-id>
 
-# Add to .env
-echo "WEBHOOK_SECRET=<your-secret>" >> .env
+# Generate and store a secret
+pass generate asdlc/webhook_secret 64
+direnv allow
 
+# The secret is now automatically loaded via .envrc
 # Set the same value on the pushing repo side (read by the pre-push hook)
-export GIT_WEBHOOK_SECRET=<your-secret>
+export GIT_WEBHOOK_SECRET=$(pass show asdlc/webhook_secret)
 ```
+
+See [VAULT_SETUP.md](VAULT_SETUP.md) for complete secret management guide.
 
 ## Install the push hook on a repo
 
@@ -221,7 +226,11 @@ Watch the asdlc server logs to see the analysis run.
 
 ## Configuration
 
-All settings can be overridden via environment variables or a `.env` file:
+All settings can be overridden via environment variables. See `.env.example` for all available options.
+
+**For local development:** Secrets are managed via `direnv` + `pass` (see [VAULT_SETUP.md](VAULT_SETUP.md)). Non-secret config can be set in `.env` (create from `.env.example`).
+
+**Production:** Set environment variables directly (via Docker, systemd, etc).
 
 | Variable | Default | Description |
 |---|---|---|

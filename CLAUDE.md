@@ -8,7 +8,7 @@ A FastAPI webhook server that automatically analyzes git pushes using local LLM 
 
 ```
 ├── main.py                         # FastAPI app, webhook endpoint, background task dispatch
-├── config.py                       # Pydantic settings + defaults from .env
+├── config.py                       # Pydantic settings + defaults from environment
 ├── security.py                     # HMAC-SHA256 signature verification
 ├── store.py                        # WorkflowStore — SQLite persistence for workflow results
 ├── replay.py                       # asdlc-replay CLI — replay a push event JSON against the server
@@ -51,7 +51,9 @@ A FastAPI webhook server that automatically analyzes git pushes using local LLM 
 │   └── asdlc-webhook-handler.groovy # Example webhook receiver job
 ├── README.md                       # User documentation
 ├── pyproject.toml                  # Dependencies and metadata
-└── .env                            # Local configuration (WEBHOOK_SECRET, OLLAMA_BASE_URL, etc.)
+├── .env.example                    # Template documenting all configuration options (committed)
+├── .envrc                          # direnv configuration (loads secrets from pass; gitignored)
+└── VAULT_SETUP.md                  # Local key vault setup guide (direnv + pass)
 ```
 
 ## Key Design Patterns
@@ -123,14 +125,21 @@ There is **no `---FINDINGS---` sentinel** and no fallback regex parser — the m
 ## Running Locally
 
 ```sh
-# Install
+# Install dependencies
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
+
+# Set up local key vault (direnv + pass for secrets)
+# See VAULT_SETUP.md for full guide
+brew install direnv pass gnupg  # one-time setup
+pass init <your-gpg-key-id>
+pass generate asdlc/webhook_secret 64
+direnv allow
 
 # Set up Ollama
 ollama pull qwen2.5-coder:7b
 
-# Start the server
+# Start the server (secrets auto-loaded by direnv)
 .venv/bin/uvicorn main:app --port 8088 --reload
 
 # In another terminal, test with a push to inventory-tracker
@@ -140,6 +149,8 @@ git push
 
 # Watch the server logs for the analysis
 ```
+
+See [VAULT_SETUP.md](VAULT_SETUP.md) for adding additional secrets (API keys, GitHub token, etc).
 
 ## Jenkins Integration
 
@@ -383,7 +394,7 @@ curl http://localhost:8088/readyz
 
 1. **New agent = orchestrator registration** — any new `BaseAgent` subclass in `agents/` must be added to `AGENT_REGISTRY` in `workflows/orchestrator.py` in the same edit session.
 
-2. **New config var = `.env` comment** — whenever a field is added to `Settings` in `config.py`, add a commented example to `.env`. The `.env` file is the canonical "what can I configure" reference. Examples: `ENABLE_CHECKPOINTING`, `API_KEY`, `RAG_ENABLED`.
+2. **New config var = `.env.example` comment** — whenever a field is added to `Settings` in `config.py`, add a commented example to `.env.example`. The `.env.example` file is the canonical "what can I configure" reference. Examples: `ENABLE_CHECKPOINTING`, `API_KEY`, `RAG_ENABLED`. Secrets are managed via `pass` and loaded by `.envrc` (see VAULT_SETUP.md).
 
 3. **Tool executors must be `async def`** — `to_langchain_tool()` wraps executors with `await`. Sync functions block the event loop. This includes RAG search tools wrapped in `BaseAgent._register_rag_tool()`.
 
