@@ -16,14 +16,39 @@ dependencies = [
     "langchain-core>=1.0,<2",
     "langchain-ollama>=1.1,<2",
     "langgraph-checkpoint-sqlite>=2.0",
+    "pyyaml>=6.0",
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.4",
 ]
 
 [project.scripts]
-asdlc-replay = "replay:main"
+asdlc = "replay:main"
+asdlc-replay = "replay:replay_main"
+asdlc-ingest = "ingest:ingest_main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["agents*", "models*", "workflows*", "tools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

@@ -24,6 +24,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     findings: list[Finding]
     summary: str
+    tokens_used: int
 
 
 class BaseAgent(ABC):
@@ -38,6 +39,7 @@ class BaseAgent(ABC):
         self._tool_definitions: list[ToolDefinition] = []
         self._tool_registry: dict[str, Callable] = {}
         self._agent_tools: list = []
+        self._knowledge_retrieved: list[dict] = []  # Track RAG documents used
 
         # Register RAG search tool if enabled
         if self.config.rag_enabled:
@@ -55,7 +57,54 @@ class BaseAgent(ABC):
     def _register_rag_tool(self):
         """Register the search_knowledge tool for RAG queries."""
         self._tool_definitions.append(rag_tools.SEARCH_KNOWLEDGE)
-        self._tool_registry[rag_tools.SEARCH_KNOWLEDGE.name] = rag_tools.search_knowledge
+        # Wrap search_knowledge to track what was retrieved
+        async def tracked_search_knowledge(query: str, collection: str, limit: int = 5, rag_store=None):
+            store = rag_store or self.rag_store
+            if not store:
+                return rag_tools.ToolResult(
+                    tool_call_id="search_knowledge",
+                    content="ERROR: RAG store not available",
+                    is_error=True,
+                )
+            # Search once and track top 3 results
+            try:
+                results = await store.search(collection, query, limit)
+                for doc in results[:3]:
+                    self._knowledge_retrieved.append({
+                        "query": query,
+                        "collection": collection,
+                        "content": doc.get("content", "")[:200],
+                        "metadata": doc.get("metadata", {}),
+                        "relevance": 1 - doc.get("distance", 0),
+                    })
+                # Format results for LLM
+                formatted_results = []
+                for r in results:
+                    formatted_results.append({
+                        "content": r.get("content", "")[:500],
+                        "metadata": r.get("metadata", {}),
+                        "relevance": 1 - r.get("distance", 0),
+                    })
+                import json
+                return rag_tools.ToolResult(
+                    tool_call_id="search_knowledge",
+                    content=json.dumps({
+                        "query": query,
+                        "collection": collection,
+                        "results_count": len(formatted_results),
+                        "results": formatted_results,
+                    }),
+                    is_error=False,
+                )
+            except Exception as e:
+                logger.error(f"Error searching knowledge base: {e}")
+                return rag_tools.ToolResult(
+                    tool_call_id="search_knowledge",
+                    content=f"ERROR: Search failed: {str(e)}",
+                    is_error=True,
+                )
+
+        self._tool_registry[rag_tools.SEARCH_KNOWLEDGE.name] = tracked_search_knowledge
 
     @abstractmethod
     def get_system_prompt(self) -> str: ...
@@ -159,9 +208,14 @@ class BaseAgent(ABC):
             response = self._coerce_text_tool_call(response, tool_names)
             calls = [c["name"] for c in response.tool_calls] if response.tool_calls else []
             content_len = len(response.content) if isinstance(response.content, str) else 0
+
+            tokens_this_call = 0
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                tokens_this_call = response.usage_metadata.get("output_tokens", 0) + response.usage_metadata.get("input_tokens", 0)
+
             logger.info(
-                "agent=%s turn=%d tool_calls=%s content_len=%d",
-                self.name, turn_counter["n"], calls or "none", content_len,
+                "agent=%s turn=%d tool_calls=%s content_len=%d tokens=%d",
+                self.name, turn_counter["n"], calls or "none", content_len, tokens_this_call,
             )
             if calls:
                 for call in response.tool_calls:
@@ -172,7 +226,7 @@ class BaseAgent(ABC):
                         call.get("name"),
                         args_len,
                     )
-            return {"messages": [response]}
+            return {"messages": [response], "tokens_used": tokens_this_call}
 
         async def extract_findings(state: AgentState) -> dict:
             summary = ""
@@ -185,6 +239,9 @@ class BaseAgent(ABC):
                 self.name,
                 len(summary),
             )
+
+            tokens_used = state.get("tokens_used", 0)
+
             try:
                 extraction: FindingList = await structured_llm.ainvoke([
                     SystemMessage(content=(
@@ -195,6 +252,10 @@ class BaseAgent(ABC):
                     HumanMessage(content=summary or "No analysis was produced."),
                 ])
                 findings = list(extraction.findings)
+
+                if hasattr(extraction, "usage_metadata") and extraction.usage_metadata:
+                    tokens_used += extraction.usage_metadata.get("output_tokens", 0) + extraction.usage_metadata.get("input_tokens", 0)
+
                 logger.debug(
                     "extraction_success agent=%s findings=%d severity_dist=%s",
                     self.name,
@@ -224,6 +285,10 @@ class BaseAgent(ABC):
                         HumanMessage(content=summary),
                     ])
                     findings = list(retry_extraction.findings)
+
+                    if hasattr(retry_extraction, "usage_metadata") and retry_extraction.usage_metadata:
+                        tokens_used += retry_extraction.usage_metadata.get("output_tokens", 0) + retry_extraction.usage_metadata.get("input_tokens", 0)
+
                     logger.debug(
                         "extraction_retry_success agent=%s findings=%d",
                         self.name,
@@ -232,7 +297,7 @@ class BaseAgent(ABC):
                 except Exception as e:
                     logger.warning("agent=%s retry extraction also failed: %s", self.name, e)
 
-            return {"findings": findings, "summary": summary}
+            return {"findings": findings, "summary": summary, "tokens_used": tokens_used}
 
         def should_continue(state: AgentState) -> str:
             last = state["messages"][-1]
@@ -289,6 +354,7 @@ class BaseAgent(ABC):
             "messages": [SystemMessage(content=system_prompt), HumanMessage(content=initial_message)],
             "findings": [],
             "summary": "",
+            "tokens_used": 0,
         }
 
         invoke_config: dict = {"recursion_limit": self.config.agent_recursion_limit}
@@ -312,16 +378,18 @@ class BaseAgent(ABC):
 
             findings = final.get("findings", [])
             summary = final.get("summary", "")
+            tokens_used = final.get("tokens_used", 0)
         except GraphRecursionError:
             logger.warning("agent=%s hit recursion_limit=%d", self.name, self.config.agent_recursion_limit)
-            findings, summary = [], "Agent stopped after reaching the recursion limit."
+            findings, summary, tokens_used = [], "Agent stopped after reaching the recursion limit.", 0
 
-        logger.info("agent=%s findings=%d", self.name, len(findings))
+        logger.info("agent=%s findings=%d tokens=%d knowledge_used=%d", self.name, len(findings), tokens_used, len(self._knowledge_retrieved))
         return AgentResult(
             agent_name=self.name,
             status="success",
             findings=findings,
             summary=summary,
             duration_seconds=round(time.monotonic() - start, 2),
-            tokens_used=0,
+            tokens_used=tokens_used,
+            knowledge_used=self._knowledge_retrieved,
         )
