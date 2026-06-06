@@ -1,146 +1,123 @@
-# asdlc — Remaining Backlog
+# asdlc — Backlog & Tracking
 
-Items not yet implemented, ordered by priority. Pick up any row and it should be self-contained enough to start from.
+## ✅ Completed Work (2026-06-06)
 
----
+All items below were implemented in a prior session. See [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md) for details.
 
-## P1 — Observability
-
-### Structured JSON log output
-**File:** `main.py`, all agents  
-**Why:** Plain-text `logging.info` lines are hard to aggregate in Loki, Datadog, or CloudWatch. JSON logs let you filter by `repo`, `run_id`, `severity`, etc. without regex.  
-**What to do:**
-- Add `structlog` (or replace `logging.basicConfig` with a custom JSON formatter)
-- Each log line should be a JSON object with at minimum: `ts`, `level`, `logger`, `event`, plus any kwargs passed to the log call
-- Key structured fields already present as kwargs in the existing log calls — just needs the formatter wired up
-
----
-
-## P2 — Integrations
-
-### GitHub PR comment posting
-**File:** new `integrations/github.py`, wired into `main.py` `_run_workflow`  
-**Why:** Instead of polling `/results`, teams want findings posted directly as a PR review comment the moment a push is analysed.  
-**What to do:**
-- Add `GITHUB_TOKEN` and `GITHUB_REPO` config vars
-- The push payload may contain a PR number; alternatively, use GitHub API to find open PRs matching the branch (`GET /repos/{owner}/{repo}/pulls?head={branch}`)
-- Post a markdown summary as a PR review comment (`POST /repos/{owner}/{repo}/issues/{pr}/comments`)
-- Format: collapsible `<details>` block per agent, severity badge per finding
-- Only post when there are findings; skip if no `GITHUB_TOKEN` is set
+| Item | Status | Files | Notes |
+|---|---|---|---|
+| **Structured JSON log output** (P1) | ✅ | `main.py` | `_JsonFormatter` class, wired into `_configure_logging()` |
+| **GitHub PR comment posting** (P2) | ✅ | `integrations/github.py`, `main.py` | Posts findings as review comments on PRs; inline comments optional |
+| **Diff chunking for large changes** (P3) | ✅ | `config.py`, `workflows/orchestrator.py` | `DIFF_CHUNK_SIZE_KB` config var; splits diffs >25 KB with overlap |
+| **Per-repo `.asdlc.yml` overrides** (P4) | ✅ | `workflows/repo_config.py`, `workflows/router.py` | Schema validation via Pydantic; cached by (repo_url, sha) |
+| **Changed-files-only mode** (P4) | ✅ | `agents/base.py`, `workflows/orchestrator.py` | Per-agent `file_filter` in `AgentSpec`; pre-filters diff before analysis |
+| **Hook installer CLI** (P5) | ✅ | `replay.py` | `asdlc install-hook` subcommand; validates server reachability |
+| **Docker Compose setup** (P5) | ✅ | `docker-compose.yml`, `Dockerfile` | One-command local dev setup (Ollama + asdlc) |
 
 ---
 
-## P3 — Agent Quality
+## 🚀 Actual Remaining Work
 
-### Diff chunking for large changes
-**File:** `workflows/orchestrator.py`, `tools/git_tools.py`  
-**Why:** Diffs over 30 KB are silently truncated today (`output[:30000]` in `fetch_diff`). Large refactors or dependency bumps lose most of the context.  
+### High Priority
+
+#### 1. Fan-out workflows (run multiple workflows in parallel)
+**File:** `workflows/orchestrator.py`, `workflows/base.py`, routing rules  
+**Why:** A sensitive branch push should run `quick_review` + `security_focus` simultaneously, not pick one.  
+**Effort:** M (1–2 days)  
 **What to do:**
-- In `orchestrator.py` `_fetch_diff`: if the raw diff exceeds a threshold (e.g. 25 KB), split it into overlapping chunks (e.g. 20 KB chunks with 2 KB overlap)
-- Run the agent once per chunk, collecting findings from each run
-- Merge findings lists and deduplicate (same key already used in `_deduplicate_findings`)
-- Add `DIFF_CHUNK_SIZE_KB` config var (default 25, 0 = disable chunking)
-- Log a warning when chunking kicks in: `"diff too large (N KB), chunking into M parts"`
+- Add optional `fan_out: list[str]` field to `WorkflowDefinition` (names of workflows to run in parallel)
+- In `WorkflowOrchestrator.analyze()`, if `fan_out` is set, run each workflow via `asyncio.gather`
+- Merge `agent_results` from all workflows; deduplicate findings across the merged set
+- Add a `FanOutRule` routing rule type
 
----
-
-## P4 — Workflow & Routing
-
-### Per-repo `.asdlc.yml` workflow overrides
-**File:** new `workflows/repo_config.py`, wired into `workflows/router.py`  
-**Why:** The routing rules are global and hard-coded. Teams want to opt specific repos into a different workflow, disable certain agents, or add custom file-pattern rules without touching server code.  
-**What to do:**
-- Parse `.asdlc.yml` from the repo root at `HEAD` using `get_file_content` (already exists)
-- Schema:
-  ```yaml
-  workflow: full_review          # override which workflow to use
-  agents:
-    exclude: [test_coverage]     # drop specific agents
-  routing:
-    - pattern: "*.sol"           # extra file-pattern rule
-      workflow: security_focus
-  ```
-- Fall back to global routing if no `.asdlc.yml` or file is missing/malformed
-- Cache parsed config per `(repo_url, after_sha)` for the lifetime of the run
-
-### Incremental / changed-files-only mode
-**File:** `agents/base.py`, `models/results.py`  
-**Why:** Agents today see the whole diff. For repos with large diffs only one subsystem at a time tends to change — passing the full 30 KB diff to the security agent when only config files changed wastes tokens and degrades focus.  
-**What to do:**
-- Add a per-agent `file_filter: list[str]` field to `AgentSpec` (glob patterns)
-- In `orchestrator._build_agents`, attach the filter to each agent
-- In `agent.run`, pre-filter `context.git_diff` to only include hunks for matching files before building the initial message
-- `security_analyst` could filter to `*.py`, `*.js`, `*.ts`, auth/crypto paths; `dep_auditor` already does this manually — unify the pattern
-
-### Fan-out workflow (run multiple workflows in parallel)
-**File:** `workflows/orchestrator.py`, `main.py`  
-**Why:** A push to a sensitive-file branch today can only trigger one workflow. Teams want `quick_review` + `security_focus` to run simultaneously and get a merged result.  
-**What to do:**
-- Add `fan_out: list[str]` optional field to `WorkflowDefinition`
-- In `orchestrator.run`, if `fan_out` is set, run each named workflow concurrently via `asyncio.gather`
-- Merge `agent_results` lists from all workflows; run deduplication across the merged set
-- Expose as a new routing rule type: `FanOutRule`
-
----
-
-## P5 — Developer Experience
-
-### Hook installer script
-**File:** `replay.py` (extend) or new `cli.py`  
-**Why:** The pre-push hook setup requires copy-pasting a multi-line bash script from the README. A one-command installer removes the friction.  
-**What to do:**
-- Add `asdlc install-hook <repo-path>` subcommand (extend the existing `replay.py` CLI with `argparse` subparsers, or create a new `cli.py`)
-- Write `.git/hooks/pre-push` from a template string embedded in the script
-- `chmod +x` the hook file
-- Validate that the server is reachable at `GIT_WEBHOOK_URL` (or `--url`) before writing
-- Print clear next steps: set `GIT_WEBHOOK_SECRET`, do a test push
-- Register as `asdlc` console_script entry point alongside `asdlc-replay`
-
-### Docker Compose setup
-**File:** new `docker-compose.yml`, `Dockerfile`  
-**Why:** The manual Ollama install + port wiring is the biggest setup friction for new users.  
-**What to do:**
-  ```yaml
-  # docker-compose.yml sketch
-  services:
-    asdlc:
-      build: .
-      ports: ["8088:8088"]
-      environment:
-        OLLAMA_BASE_URL: http://ollama:11434/v1
-      depends_on: [ollama]
-    ollama:
-      image: ollama/ollama
-      volumes: [ollama_data:/root/.ollama]
-      ports: ["11434:11434"]
-  ```
-- `Dockerfile`: multi-stage, `python:3.13-slim`, install deps, copy source, `CMD uvicorn main:app --host 0.0.0.0 --port 8088`
-- Add a `docker-compose up` quick-start section to README
-
-### Expanded test suite
+#### 2. Expanded test suite
 **File:** `tests/`  
-**Why:** Only 7 HMAC tests exist. Agents, orchestrator, and router have zero coverage.  
-**What to do (pick any):**
-- `tests/test_router.py` — test `BranchPatternRule`, `FilePatternRule`, `DefaultRule` routing decisions with fixture `PushEvent` objects
-- `tests/test_orchestrator.py` — mock the Ollama client; verify sequential context enrichment, deduplication, timeout handling
-- `tests/test_dep_auditor.py` — mock `httpx` OSV responses; verify CVE finding generation and package extraction from diff strings
-- `tests/test_findings_parser.py` — parametrize `BaseAgent._parse_findings` with the full set of model output shapes (sentinel, fenced block, bare array, dict wrapper, malformed JSON)
-- `tests/test_store.py` — use `tmp_path` fixture; verify save/list/get round-trip on a real SQLite file
+**Why:** Coverage is sparse (only HMAC tests exist). Agents, orchestrator, router have zero coverage.  
+**Effort:** L (2–3 days, pick any subset)  
+**What to do (pick any or all):**
+- `tests/test_router.py` — test `BranchPatternRule`, `FilePatternRule`, `DefaultRule` routing decisions
+- `tests/test_orchestrator.py` — mock Ollama client; verify sequential context enrichment, deduplication, timeout handling
+- `tests/test_agent_subgraph.py` — expand existing tests; verify tool calling, message reducer, recursion limit
+- `tests/test_findings_parser.py` — parametrize `BaseAgent.extract_findings()` with model output shapes (JSON block, bare array, wrapped, malformed)
+- `tests/test_store.py` — verify save/list/get round-trip on SQLite; test indices exist
 
 ---
 
-## Effort summary
+### Medium Priority
 
-| Item | Effort | Risk |
-|---|---|---|
-| Structured JSON logs | XS | Low |
-| GitHub PR comments | S | Low |
-| Diff chunking | M | Medium |
-| `.asdlc.yml` overrides | M | Low |
-| Changed-files-only mode | M | Low |
-| Fan-out workflow | M | Medium |
-| Hook installer CLI | S | Low |
-| Docker Compose | S | Low |
-| Expanded test suite | L | Low |
+#### 3. Agent effectiveness metrics
+**File:** `templates/dashboard.html`, `store.py`, new metrics endpoint  
+**Why:** "Which agents find the most bugs?" and "Is code quality trending up?" — need dashboards.  
+**Effort:** S (1 day)  
+**What to do:**
+- Add agent-level aggregations to `WorkflowStore`: `findings_by_agent`, `avg_severity_by_agent`, `agent_effectiveness_score`
+- Add `/metrics/agents` endpoint returning JSON with these aggregations
+- Extend dashboard to show agent comparison table + trend charts over time
 
-**XS** = < 1 hour · **S** = half day · **M** = 1–2 days · **L** = 2–3 days
+#### 4. Result comparison UI
+**File:** `main.py` (new endpoint), `templates/`  
+**Why:** Compare findings across two runs to spot regressions/improvements.  
+**Effort:** M (1 day)  
+**What to do:**
+- Add `GET /compare/{run_id_1}/{run_id_2}` endpoint
+- Return JSON diff: added findings, removed findings, unchanged
+- Extend dashboard with side-by-side comparison view
+
+#### 5. Model A/B testing mode
+**File:** `config.py`, `workflows/orchestrator.py`  
+**Why:** Compare agent output across models (qwen2.5-coder:7b vs. llama3.1:8b) to pick the best.  
+**Effort:** M (1–2 days)  
+**What to do:**
+- Add `MODEL_AB_TEST_AGENTS: list[str]` config (empty = disabled)
+- When set, run each listed agent through both models in parallel
+- Store results separately; expose via API for comparison
+
+#### 6. Request body caching (security debt)
+**File:** `main.py`, `security.py`  
+**Why:** Currently `await request.body()` consumes the stream in webhook verification; body isn't re-parseable.  
+**Effort:** S (2–4 hours)  
+**Note:** This works today but is fragile. Not a bug, but architectural debt.  
+**What to do:**
+- Add middleware that caches `request.body()` before verification
+- Pass cached body to both `verify_webhook_signature()` and route handler
+
+---
+
+### Low Priority (Strategic, not immediate)
+
+#### 7. PostgreSQL migration path
+**File:** New `storage/postgres_adapter.py`, docs  
+**Why:** SQLite is single-writer; PostgreSQL enables horizontal scaling + multi-instance setup.  
+**Effort:** L (3–5 days)  
+**What to do:**
+- Document migration strategy (don't implement yet)
+- Create adapter that implements same `WorkflowStore` interface
+- Write migration guide for users: export SQLite → seed Postgres → point config to new DB
+
+#### 8. Token counting via `tiktoken`
+**File:** `models/results.py`, agents  
+**Why:** Today `tokens_used` is always 0. Can estimate via token counting library.  
+**Effort:** XS (4 hours)  
+**What to do:**
+- Add `tiktoken` to dependencies
+- In `AgentResult`, estimate tokens from `input_messages` + `output_text` length
+- Store estimate in `tokens_used`; note it's approximate
+
+---
+
+## Effort Legend
+
+| Symbol | Meaning |
+|---|---|
+| **XS** | < 1 hour |
+| **S** | ~4–6 hours (half day) |
+| **M** | 1–2 days |
+| **L** | 2–3 days |
+
+---
+
+## Next Steps
+
+1. **For this session:** Pick one from "High Priority" or "Medium Priority"
+2. **After implementing:** Update CLAUDE.md, README.md, and tests per the "Update Triggers" table in CLAUDE.md
+3. **Before closing:** Mark this backlog item ✅ and move to completed section above
