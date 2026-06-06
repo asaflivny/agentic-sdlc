@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>asdlc — {{ run_id[:8] }}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+    background: #0d1117; color: #c9d1d9; min-height: 100vh;
+    font-size: 14px; line-height: 1.5;
+  }
+  .page { max-width: 960px; margin: 0 auto; padding: 2rem 2.5rem; }
+
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .back-link {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    font-size: 0.8rem; color: #484f58; margin-bottom: 1.75rem;
+  }
+  .back-link:hover { color: #58a6ff; }
+
+  /* run header */
+  .run-header { margin-bottom: 1.75rem; }
+  .run-title { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 1rem; }
+  .run-id    { font-size: 1.2rem; color: #58a6ff; letter-spacing: -0.02em; }
+  .run-workflow { color: #d2a8ff; font-size: 0.85rem; }
+
+  .run-meta { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+  .run-meta-item { display: flex; flex-direction: column; gap: 0.1rem; }
+  .run-meta-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: #484f58; }
+  .run-meta-value { color: #c9d1d9; font-size: 0.82rem; }
+
+  /* summary */
+  .summary-box {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 1rem 1.25rem; margin-bottom: 2rem;
+  }
+  .section-label {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #6e7681; margin-bottom: 0.5rem;
+  }
+  .summary-text { color: #c9d1d9; font-size: 0.82rem; white-space: pre-wrap; line-height: 1.65; }
+
+  /* agent cards */
+  .agents { display: flex; flex-direction: column; gap: 1.25rem; }
+  .agent-card {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; overflow: hidden;
+  }
+  .agent-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.7rem 1rem; background: #161b22; border-bottom: 1px solid #21262d;
+  }
+  .agent-name { font-weight: 600; color: #e6edf3; font-size: 0.85rem; }
+  .agent-meta { display: flex; gap: 0.75rem; align-items: center; font-size: 0.75rem; color: #8b949e; }
+
+  .status-badge {
+    padding: 0.1rem 0.45rem; border-radius: 4px;
+    font-size: 0.7rem; font-weight: 600;
+  }
+  .status-success { background: rgba(63,185,80,0.15);  color: #3fb950; }
+  .status-error   { background: rgba(248,81,73,0.15);  color: #f85149; }
+  .status-timeout { background: rgba(210,153,34,0.15); color: #d29922; }
+
+  .agent-summary {
+    padding: 0.65rem 1rem; font-size: 0.78rem; color: #8b949e;
+    border-bottom: 1px solid #161b22; line-height: 1.55;
+  }
+
+  /* findings */
+  .findings-list { padding: 0.5rem 0; }
+  .finding {
+    border-left: 3px solid transparent;
+    margin: 0.5rem 1rem; padding: 0.7rem 1rem;
+    background: #161b22; border-radius: 0 6px 6px 0;
+  }
+  .finding-critical { border-left-color: #f85149; }
+  .finding-high     { border-left-color: #e3772c; }
+  .finding-medium   { border-left-color: #d29922; }
+  .finding-low      { border-left-color: #3fb950; }
+  .finding-info     { border-left-color: #6e7681; }
+
+  .finding-header { display: flex; align-items: baseline; gap: 0.55rem; margin-bottom: 0.35rem; }
+  .finding-sev {
+    font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0.1rem 0.38rem; border-radius: 3px; flex-shrink: 0;
+  }
+  .sev-critical { background: rgba(248,81,73,0.2);  color: #f85149; }
+  .sev-high     { background: rgba(227,119,44,0.2); color: #e3772c; }
+  .sev-medium   { background: rgba(210,153,34,0.2); color: #d29922; }
+  .sev-low      { background: rgba(63,185,80,0.15); color: #3fb950; }
+  .sev-info     { background: rgba(110,118,129,0.15); color: #8b949e; }
+
+  .finding-title    { font-weight: 600; color: #e6edf3; font-size: 0.85rem; }
+  .finding-location { font-size: 0.72rem; color: #58a6ff; margin-bottom: 0.45rem; }
+  .finding-desc     { font-size: 0.8rem; color: #c9d1d9; margin-bottom: 0.45rem; line-height: 1.55; }
+  .finding-rec {
+    font-size: 0.78rem; color: #8b949e; border-top: 1px solid #21262d;
+    padding-top: 0.4rem; margin-top: 0.35rem; line-height: 1.55;
+  }
+  .finding-rec::before { content: "💡 "; }
+
+  .no-findings { padding: 0.75rem 1rem; color: #484f58; font-size: 0.8rem; }
+
+  /* knowledge used */
+  .knowledge-section {
+    padding: 0.65rem 1rem; border-bottom: 1px solid #161b22;
+    background: rgba(88, 166, 255, 0.05); border-left: 3px solid #58a6ff;
+  }
+  .knowledge-label {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #58a6ff; font-weight: 600; margin-bottom: 0.4rem;
+  }
+  .knowledge-items {
+    display: flex; flex-direction: column; gap: 0.4rem;
+  }
+  .knowledge-item {
+    font-size: 0.75rem; padding: 0.4rem 0.6rem;
+    background: #161b22; border-radius: 3px; border-left: 2px solid #58a6ff;
+    color: #8b949e;
+  }
+  .knowledge-item-query {
+    color: #58a6ff; font-weight: 500;
+  }
+  .knowledge-item-relevance {
+    color: #3fb950; font-size: 0.7rem; float: right;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <a class="back-link" href="/">← back to dashboard</a>
+
+  <div class="run-header">
+    <div class="run-title">
+      <span class="run-id">{{ run_id[:8] }}</span>
+      <span class="run-workflow">{{ result.workflow_name }}</span>
+    </div>
+    <div class="run-meta">
+      <div class="run-meta-item">
+        <span class="run-meta-label">Repo</span>
+        <span class="run-meta-value">{{ result.repo_name }}</span>
+      </div>
+      <div class="run-meta-item">
+        <span class="run-meta-label">Branch</span>
+        <span class="run-meta-value">{{ result.branch }}</span>
+      </div>
+      <div class="run-meta-item">
+        <span class="run-meta-label">Started</span>
+        <span class="run-meta-value">{{ result.started_at[:19].replace("T", " ") }} UTC</span>
+      </div>
+      {% if duration_seconds is not none %}
+      <div class="run-meta-item">
+        <span class="run-meta-label">Duration</span>
+        <span class="run-meta-value">
+          {% if duration_seconds >= 60 %}
+            {{ (duration_seconds // 60)|int }}m {{ (duration_seconds % 60)|int }}s
+          {% else %}
+            {{ duration_seconds }}s
+          {% endif %}
+        </span>
+      </div>
+      {% endif %}
+      <div class="run-meta-item">
+        <span class="run-meta-label">Findings</span>
+        <span class="run-meta-value">{{ total_findings }}</span>
+      </div>
+    </div>
+  </div>
+
+  {% if result.overall_summary %}
+  <div class="summary-box">
+    <div class="section-label">Overall Summary</div>
+    <div class="summary-text">{{ result.overall_summary }}</div>
+  </div>
+  {% endif %}
+
+  <div class="agents">
+    {% for agent in result.agent_results %}
+    <div class="agent-card">
+      <div class="agent-header">
+        <span class="agent-name">{{ agent.agent_name.replace("_", " ").title() }}</span>
+        <div class="agent-meta">
+          <span class="status-badge status-{{ agent.status }}">{{ agent.status }}</span>
+          {% if agent.duration_seconds %}<span>{{ agent.duration_seconds }}s</span>{% endif %}
+          <span>{{ agent.findings | length }} finding{% if agent.findings | length != 1 %}s{% endif %}</span>
+        </div>
+      </div>
+      {% if agent.summary %}
+      <div class="agent-summary">{{ agent.summary[:500] }}{% if agent.summary | length > 500 %}…{% endif %}</div>
+      {% endif %}
+      {% if agent.knowledge_used %}
+      <div class="knowledge-section">
+        <div class="knowledge-label">🧠 Knowledge Retrieved ({{ agent.knowledge_used | length }})</div>
+        <div class="knowledge-items">
+          {% for knowledge in agent.knowledge_used %}
+          <div class="knowledge-item">
+            <div class="knowledge-item-query"><strong>{{ knowledge.query }}</strong></div>
+            <div style="font-size: 0.7rem; color: #6e7681; margin-top: 0.2rem;">
+              {{ knowledge.content[:100] }}{% if knowledge.content | length > 100 %}…{% endif %}
+            </div>
+            {% if knowledge.relevance %}<span class="knowledge-item-relevance">{{ (knowledge.relevance * 100) | int }}%</span>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if agent.findings %}
+      <div class="findings-list">
+        {% for f in agent.findings %}
+        <div class="finding finding-{{ f.severity }}">
+          <div class="finding-header">
+            <span class="finding-sev sev-{{ f.severity }}">{{ f.severity }}</span>
+            <span class="finding-title">{{ f.title }}</span>
+          </div>
+          {% if f.file_path %}
+          <div class="finding-location">{{ f.file_path }}{% if f.line_number %}:{{ f.line_number }}{% endif %}</div>
+          {% endif %}
+          <div class="finding-desc">{{ f.description }}</div>
+          {% if f.recommendation %}
+          <div class="finding-rec">{{ f.recommendation }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="no-findings">No findings from this agent.</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+</body>
+</html>
