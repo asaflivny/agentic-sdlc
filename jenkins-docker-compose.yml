@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins-asdlc
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock  # for Docker in Docker
+    environment:
+      - JENKINS_OPTS=--install-plugins=pipeline:latest,generic-webhook-trigger:latest,junit:latest
+    networks:
+      - asdlc
+
+  # asdlc server (for reference; usually runs separately)
+  # asdlc:
+  #   build: .
+  #   ports:
+  #     - "8088:8088"
+  #   environment:
+  #     - OLLAMA_BASE_URL=http://ollama:11434/v1
+  #   networks:
+  #     - asdlc
+
+volumes:
+  jenkins_home:
+
+networks:
+  asdlc:
+    driver: bridge

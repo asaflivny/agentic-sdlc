@@ -1,8 +1,69 @@
+version: '3.8'
+
 services:
+  # ============================================================================
+  # Jenkins CI/CD Server
+  # ============================================================================
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins-asdlc
+    ports:
+      - "8080:8080"      # Web UI
+      - "50000:50000"    # Agent communication port
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker in Docker
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================================
+  # Gitea (Self-hosted Git Server - like GitHub/Bitbucket)
+  # ============================================================================
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea-dev
+    ports:
+      - "3000:3000"       # Web UI
+      - "2222:22"         # Git SSH
+    volumes:
+      - gitea_data:/data
+    environment:
+      - GITEA__database__DB_TYPE=postgres
+      - GITEA__database__HOST=postgres-dev
+      - GITEA__database__PORT=5432
+      - GITEA__database__NAME=gitea
+      - GITEA__database__USER=dev
+      - GITEA__database__PASSWD=dev-password
+      - GITEA__repository__ROOT_PATH=/data/gitea-repositories
+      - GITEA__server__SSH_PORT=2222
+      - GITEA__server__OFFLINE_MODE=false
+      - GITEA__server__ROOT_URL=http://localhost:3000/
+    networks:
+      - dev-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================================
+  # asdlc Server
+  # ============================================================================
   asdlc:
     build: .
+    container_name: asdlc-server
     ports:
-      - "9090:8080"
+      - "8088:8080"
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
@@ -10,26 +71,121 @@ services:
       - API_KEY=${API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DB_PATH=/data/asdlc.db
+      - REPOS_ROOT=${REPOS_ROOT:-/repos}
+      - GIT_CLONE_SOURCES=${GIT_CLONE_SOURCES:-}
     volumes:
       - asdlc-data:/data
       # Mount host repos so git tools can read them
-      - ${REPOS_ROOT:-/tmp}:/repos:ro
+      - ${REPOS_ROOT:-/repos}:/repos
+      # Mount local repos from host for cloning
+      - /Users/asaf/Projects/inventory-tracker:/host-repos/inventory-tracker:ro
+    networks:
+      - dev-network
     depends_on:
       ollama:
         condition: service_healthy
+    restart: unless-stopped
 
+  # ============================================================================
+  # Ollama (LLM inference)
+  # ============================================================================
   ollama:
     image: ollama/ollama:latest
+    container_name: ollama-dev
     ports:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    networks:
+      - dev-network
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 10
 
+  # ============================================================================
+  # PostgreSQL Database
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-dev
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # pgAdmin (PostgreSQL Web UI)
+  # ============================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin-dev
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
+      PGADMIN_CONFIG_COOKIE_DEFAULT_SECURE: "False"
+      PGADMIN_CONFIG_COOKIE_DEFAULT_HTTPONLY: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - dev-network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================================================
+  # Redis (cache/queue - optional)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
+  jenkins_home:
+    driver: local
+  gitea_data:
+    driver: local
   asdlc-data:
+    driver: local
   ollama-data:
+    driver: local
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  dev-network:
+    driver: bridge
