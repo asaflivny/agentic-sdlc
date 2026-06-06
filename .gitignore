@@ -36,6 +36,11 @@ htmlcov/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
+
+# Runtime artifacts
+repos/
 
 # Claude Code — ignore personal/local state but commit shared project config
 .claude/
