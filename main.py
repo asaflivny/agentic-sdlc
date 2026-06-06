@@ -959,3 +959,20 @@ async def metrics():
         f"asdlc_agent_duration_seconds_count {_metrics['agent_duration_seconds_count']:.0f}",
     ]
     return "\n".join(lines) + "\n"
+
+
+@app.get("/metrics/agents", dependencies=[Depends(_require_api_key)])
+async def agent_metrics():
+    """Return findings count and severity distribution for each agent."""
+    if not store:
+        return []
+    agent_stats = await store.get_agent_stats()
+    # Add effectiveness score (findings per agent, normalized)
+    if agent_stats:
+        max_findings = max(s["total_findings"] for s in agent_stats)
+        for s in agent_stats:
+            s["effectiveness_score"] = round(
+                (s["critical_count"] * 5 + s["high_count"] * 3 + s["medium_count"] * 1) / max(1, s["total_findings"]),
+                2
+            )
+    return agent_stats

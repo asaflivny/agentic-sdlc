@@ -201,6 +201,44 @@ class WorkflowStore:
             rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_agent_stats(self) -> list[dict]:
+        """Return findings count and severity distribution for each agent (all time)."""
+        if not self.conn:
+            return []
+        async with self.conn.execute(
+            """SELECT agent,
+                      COUNT(*) AS total_findings,
+                      COALESCE(SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END), 0) AS critical_count,
+                      COALESCE(SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END), 0) AS high_count,
+                      COALESCE(SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END), 0) AS medium_count,
+                      COALESCE(SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END), 0) AS low_count,
+                      COALESCE(SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END), 0) AS info_count
+               FROM findings
+               GROUP BY agent
+               ORDER BY total_findings DESC"""
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_agent_findings_trend(self, agent: str, days: int = 30) -> list[dict]:
+        """Return daily finding counts for *agent* over the last *days* days."""
+        if not self.conn:
+            return []
+        days = max(1, min(days, 365))
+        async with self.conn.execute(
+            """SELECT date(wr.started_at) AS date,
+                      COUNT(*) AS count
+               FROM findings f
+               JOIN workflow_runs wr ON f.run_id = wr.run_id
+               WHERE f.agent = ?
+                 AND wr.started_at >= datetime('now', ? || ' days')
+               GROUP BY date(wr.started_at)
+               ORDER BY date(wr.started_at)""",
+            (agent, f"-{days}"),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
     async def get_run(self, run_id: str) -> Optional[dict]:
         if not self.conn:
             return None
