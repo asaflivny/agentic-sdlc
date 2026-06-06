@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -6,6 +7,32 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from models.events import PushEvent
+
+logger = logging.getLogger(__name__)
+
+
+def estimate_tokens(text: str, model: str = "cl100k_base") -> int:
+    """Estimate token count using tiktoken (approximate, for monitoring purposes).
+
+    Args:
+        text: Text to count tokens for
+        model: Encoding to use (default: cl100k_base for gpt-3.5/4)
+
+    Returns:
+        Approximate token count
+    """
+    try:
+        import tiktoken
+        try:
+            encoding = tiktoken.get_encoding(model)
+            return len(encoding.encode(text))
+        except KeyError:
+            # Fallback if encoding not found
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+    except ImportError:
+        # Fallback if tiktoken not installed: rough estimate (4 chars ≈ 1 token)
+        return len(text) // 4
 
 
 class Severity(str, Enum):

@@ -473,6 +473,15 @@ class BaseAgent(ABC):
         if context_bytes > 0 and len(context.additional_context) < context_bytes:
             context_truncated = True
 
+        # Estimate tokens if not calculated by graph (fallback for graphs that don't track tokens)
+        if tokens_used == 0 and (summary or findings):
+            from models.results import estimate_tokens
+            import json
+            # Estimate from input context + output text
+            input_text = system_prompt + initial_message + context.additional_context
+            output_text = summary + json.dumps([f.dict() for f in findings])
+            tokens_used = estimate_tokens(input_text) + estimate_tokens(output_text)
+
         logger.info(
             "agent_complete agent=%s findings=%d tools_called=%d llm_calls=%d tokens=%d knowledge_used=%d context_bytes=%d%s",
             self.name,

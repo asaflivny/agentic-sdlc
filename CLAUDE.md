@@ -400,7 +400,7 @@ When working in this codebase, use specialized subagents as follows:
 
 ## Known Issues (as of 2026-06-06)
 
-- **Token counting** — `tokens_used` is always 0; LangGraph / Ollama doesn't surface usage in a consistent way across models
+- **Token counting** — `tokens_used` is now estimated via `tiktoken` library (approximate, for monitoring). Estimates input + output tokens based on actual text length; falls back to 4 chars = 1 token if `tiktoken` not installed.
 - **Structured extraction on small models** — `qwen2.5-coder:7b` sometimes returns an empty `findings` list even after prose analysis and retry; the `summary` field preserves the prose for manual review. Workaround: use `qwen2.5:32b`, `llama3.1:8b`, or enable `AGENT_USE_TOOLS=false` to avoid complex multi-turn loops
 - **Delegation infinite loop** — `quick_review` can delegate to security/performance via `AgentTool`, but those agents cannot delegate back (only `quick_review` has `can_call` set in its `AgentSpec`)
 - **RAG embedding latency** — first search on a collection triggers embedding model load (~5-10s); subsequent searches are fast. Disable RAG for quick local testing
