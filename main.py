@@ -76,7 +76,10 @@ orchestrator: WorkflowOrchestrator | None = None
 store: WorkflowStore | None = None
 rag_store: RAGStore | None = None
 _run_semaphore: asyncio.Semaphore | None = None
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(
+    directory="templates",
+    autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=True)
+)
 
 # In-memory Prometheus-style counters
 _metrics: dict[str, float] = {
