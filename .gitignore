@@ -42,6 +42,9 @@ htmlcov/
 # Runtime artifacts
 repos/
 
+# GitHub Actions (commit when ready for CI/CD deployment)
+.github/workflows/
+
 # Claude Code — ignore personal/local state but commit shared project config
 .claude/
 !.claude/settings.json
