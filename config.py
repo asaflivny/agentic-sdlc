@@ -21,17 +21,42 @@ class Settings(BaseSettings):
 
     # LangGraph agent loop
     agent_recursion_limit: int = 25  # super-steps per agent subgraph (call_model<->tools)
-    enable_checkpointing: bool = False  # persist graph state for resumable runs
+    agent_use_tools: bool = False  # enable the ReAct tool loop (needs a tool-reliable model);
+                                   # off = analyze the pre-fetched diff directly (recommended for small local models)
+    enable_checkpointing: bool = True  # persist graph state for resumable runs; allows recovery from server restarts
     checkpoint_db_path: str = "asdlc_checkpoints.db"
+
+    extraction_retry: bool = True  # retry structured extraction once when 0 findings but prose exists
+    diff_chunk_size_kb: int = 25   # split diffs larger than this into overlapping chunks; 0 to disable
+
+    github_token: str = ""   # post findings as PR review comments when set
+    github_repo: str = ""    # owner/repo — auto-detected from push payload if omitted
 
     webhook_secret: str = ""
     result_webhook_url: str = ""
-    slack_webhook_url: str = ""
+    slack_webhook_url: str = ""  # Slack webhook URL for notifications
+    slack_mention_channels: str = ""  # Slack channels/users to mention (comma-separated)
+    email_webhook_url: str = ""  # Email service webhook (e.g. Sendgrid, Mailgun)
+    email_recipients: str = ""  # Email recipients (comma-separated)
+    jenkins_default_api_token: str = ""  # Default Jenkins API token for all builds
     api_key: str = ""
     rate_limit_per_repo: int = 10  # max pushes per repo per minute
 
     db_path: str = "asdlc.db"
     log_level: str = "INFO"
+
+    # RAG Configuration
+    rag_enabled: bool = True
+    rag_db_path: str = "asdlc_rag.db"  # Chroma persistent directory
+    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # HuggingFace embeddings
+    rag_chunk_size: int = 500  # Characters per chunk when indexing files
+    rag_similarity_threshold: float = 0.75  # For finding deduplication
+    rag_search_limit: int = 5  # Default results per query
+
+    # Repository management
+    repos_root: str = "/repos"  # Local directory where repos are cloned
+    git_clone_sources: str = ""  # Comma-separated list of repos to clone on startup
+                                 # Format: "repo_name:source_path" e.g. "inventory-tracker:/local/git/inventory-tracker"
 
     @property
     def ollama_native_url(self) -> str:

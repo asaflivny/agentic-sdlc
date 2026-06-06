@@ -10,8 +10,8 @@ class CodeReviewAgent(BaseAgent):
     display_name = "Code Reviewer"
     description = "Reviews code for quality, correctness, maintainability, and best practices"
 
-    def __init__(self, llm: BaseChatModel, config: Settings):
-        super().__init__(llm, config)
+    def __init__(self, llm: BaseChatModel, config: Settings, rag_store=None):
+        super().__init__(llm, config, rag_store)
         self._register_tool(git_tools.FETCH_DIFF, git_tools.fetch_diff)
         self._register_tool(git_tools.GET_FILE, git_tools.get_file_content)
         self._register_tool(git_tools.LIST_FILES, git_tools.list_changed_files)
