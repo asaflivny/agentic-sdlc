@@ -11,10 +11,10 @@ FULL_REVIEW = WorkflowDefinition(
                 "Each agent sees prior findings. Used for main/release branches.",
     mode=ExecutionMode.SEQUENTIAL,
     agent_specs=[
-        AgentSpec(agent_class=CodeReviewAgent),
-        AgentSpec(agent_class=SecurityAnalystAgent),
-        AgentSpec(agent_class=PerformanceAnalystAgent),
-        AgentSpec(agent_class=DepAuditAgent),
-        AgentSpec(agent_class=TestCoverageAgent),
+        AgentSpec(agent_class=CodeReviewAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java", "*.cpp", "*.c", "*.rb", "*.php"]),
+        AgentSpec(agent_class=SecurityAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "**/auth/**", "**/crypto/**", "**/config/**"]),
+        AgentSpec(agent_class=PerformanceAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java"]),
+        AgentSpec(agent_class=DepAuditAgent, file_filter=["requirements.txt", "requirements*.txt", "pyproject.toml", "setup.py", "package.json", "yarn.lock", "Gemfile", "Cargo.toml", "pom.xml"]),
+        AgentSpec(agent_class=TestCoverageAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java"]),
     ],
 )

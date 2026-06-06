@@ -8,7 +8,7 @@ SECURITY_FOCUS = WorkflowDefinition(
                 "(secrets, auth, certs) are changed.",
     mode=ExecutionMode.PARALLEL,
     agent_specs=[
-        AgentSpec(agent_class=SecurityAnalystAgent),
-        AgentSpec(agent_class=PerformanceAnalystAgent),
+        AgentSpec(agent_class=SecurityAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "**/auth/**", "**/crypto/**", "**/config/**", "*.pem", "*.key", "*.crt"]),
+        AgentSpec(agent_class=PerformanceAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java"]),
     ],
 )

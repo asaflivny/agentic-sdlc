@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from tools.base import ToolDefinition, ToolParameter, ToolResult
 
 if TYPE_CHECKING:
-    from agents.base import AgentContext, BaseAgent
+    from agents.base import BaseAgent
+    from models.results import AgentContext
 
 logger = logging.getLogger(__name__)
 

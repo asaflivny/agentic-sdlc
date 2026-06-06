@@ -35,6 +35,7 @@ class AgentResult(BaseModel):
     summary: str = ""
     duration_seconds: float = 0.0
     tokens_used: int = 0
+    knowledge_used: list[dict] = []  # RAG documents retrieved (title, source, relevance)
 
 
 class WorkflowResult(BaseModel):

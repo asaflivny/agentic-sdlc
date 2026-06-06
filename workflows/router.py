@@ -1,7 +1,6 @@
 import logging
 import re
 from abc import ABC, abstractmethod
-from fnmatch import fnmatch
 
 from models.events import PushEvent
 from workflows.base import WorkflowDefinition
@@ -94,6 +93,17 @@ class WorkflowRouter:
         )
 
     def route(self, event: PushEvent) -> WorkflowDefinition:
+        all_files = [
+            f
+            for commit in event.commits
+            for f in (commit.added + commit.modified + commit.removed)
+        ]
+        logger.debug(
+            "routing decision repo=%s branch=%s files_changed=%d",
+            event.repository.name,
+            event.branch,
+            len(all_files),
+        )
         for rule in self._rules:
             if rule.matches(event):
                 logger.info(
@@ -102,6 +112,12 @@ class WorkflowRouter:
                     event.branch,
                     rule.workflow.name,
                     rule.name,
+                )
+                logger.debug(
+                    "rule_details rule=%s agents=%d mode=%s",
+                    rule.name,
+                    len(rule.workflow.agent_specs),
+                    rule.workflow.mode,
                 )
                 return rule.workflow
         return QUICK_REVIEW

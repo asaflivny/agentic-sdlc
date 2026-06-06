@@ -3,7 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agents.base import BaseAgent
+    pass
 
 
 class ExecutionMode(str, Enum):
@@ -15,6 +15,7 @@ class ExecutionMode(str, Enum):
 class AgentSpec:
     agent_class: type
     can_call: list[str] = field(default_factory=list)
+    file_filter: list[str] = field(default_factory=list)  # glob patterns to include; empty = all files
 
 
 @dataclass

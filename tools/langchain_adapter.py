@@ -54,16 +54,27 @@ def _build_args_schema(definition: ToolDefinition, executor: Callable):
     return create_model(f"{definition.name}_args", **fields)
 
 
-def to_langchain_tool(definition: ToolDefinition, executor: Callable) -> StructuredTool:
+def to_langchain_tool(
+    definition: ToolDefinition,
+    executor: Callable,
+    arg_overrides: dict[str, Any] | None = None,
+) -> StructuredTool:
     """Wrap a (ToolDefinition, async executor) pair as a LangChain StructuredTool.
 
     The wrapper invokes the original executor and returns `ToolResult.content` as the tool
     output. Errors are surfaced as text (prefixed with ERROR:) rather than raised, matching
     the old loop's behaviour where agents saw tool errors as tool output.
+
+    `arg_overrides` force specific argument values regardless of what the model passes —
+    used to inject the real local `repo_url` from context, since the model only sees the
+    repo *name* and otherwise hallucinates an unresolvable path.
     """
     args_schema = _build_args_schema(definition, executor)
+    param_names = {p.name for p in definition.parameters}
+    overrides = {k: v for k, v in (arg_overrides or {}).items() if k in param_names}
 
     async def _run(**kwargs: Any) -> str:
+        kwargs.update(overrides)
         result: ToolResult = await executor(**kwargs)
         if result.is_error:
             return f"ERROR: {result.content}"
