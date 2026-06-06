@@ -263,6 +263,15 @@ When using Jenkins integration, callback POST may fail if:
 
 Check asdlc logs for `jenkins callback failed` or `jenkins set_build_status failed` messages. Ensure callback URL is reachable from the asdlc server's network.
 
+### 7. Webhook Body Caching
+
+The `/git/push` endpoint uses a middleware (`cache_request_body` in `main.py`) to cache the request body so it can be read multiple times:
+1. **Middleware reads body** — on every request, the body is read once and cached in `request.state.body`
+2. **Signature verification** — `security.py` uses the cached body (or falls back to reading if cache unavailable)
+3. **Route handler parsing** — FastAPI can then parse the body as `PushEvent` JSON without issues
+
+This pattern prevents the common FastAPI gotcha where `await request.body()` consumes the stream and makes it unparseable for downstream code. The caching is transparent and adds minimal overhead.
+
 ## Adding a New Agent
 
 1. Create `agents/my_agent.py`:
