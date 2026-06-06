@@ -410,7 +410,7 @@
                 const item = document.createElement('li');
                 item.className = 'collection-item' + (name === currentCollection ? ' active' : '');
                 item.innerHTML = `
-                    <span class="collection-name">${name}</span>
+                    <span class="collection-name">${escapeHtml(name)}</span>
                     <span class="collection-count">${count}</span>
                 `;
                 item.onclick = () => selectCollection(name);
@@ -499,7 +499,7 @@
                             <div class="result-metadata">
                                 ${Object.entries(metadata).map(([key, value]) => `
                                     <div class="metadata-item">
-                                        <div class="metadata-label">${key}</div>
+                                        <div class="metadata-label">${escapeHtml(key)}</div>
                                         <div class="metadata-value">${escapeHtml(String(value).substring(0, 100))}</div>
                                     </div>
                                 `).join('')}
@@ -548,7 +548,7 @@
                             <div class="result-metadata">
                                 ${Object.entries(metadata).map(([key, value]) => `
                                     <div class="metadata-item">
-                                        <div class="metadata-label">${key}</div>
+                                        <div class="metadata-label">${escapeHtml(key)}</div>
                                         <div class="metadata-value">${escapeHtml(String(value).substring(0, 100))}</div>
                                     </div>
                                 `).join('')}

@@ -51,8 +51,23 @@ class AgentTool:
             update={"additional_context": task_description + extra}
         )
 
+        logger.info(
+            "sub_agent_delegated parent_agent=%s child_agent=%s task_bytes=%d",
+            getattr(self._context, "trace", None) and self._context.trace.agent_trace_id,
+            self.agent.name,
+            len(task_description),
+        )
+
         try:
             result = await self.agent.run(sub_context)
+            logger.info(
+                "sub_agent_complete parent_agent=%s child_agent=%s findings=%d tools=%d status=%s",
+                getattr(self._context, "trace", None) and self._context.trace.agent_trace_id,
+                self.agent.name,
+                len(result.findings),
+                len(result.tool_calls_made),
+                result.status,
+            )
             payload = json.dumps(
                 {
                     "agent": self.agent.name,
@@ -62,5 +77,10 @@ class AgentTool:
             )
             return ToolResult("", payload)
         except Exception as e:
-            logger.exception("sub-agent %s failed", self.agent.name)
+            logger.exception(
+                "sub_agent_failed parent_agent=%s child_agent=%s error=%s",
+                getattr(self._context, "trace", None) and self._context.trace.agent_trace_id,
+                self.agent.name,
+                e,
+            )
             return ToolResult("", str(e), is_error=True)

@@ -109,9 +109,6 @@ async def clone_or_verify_repos(repos_root: str, clone_sources: str) -> dict[str
 
 async def sync_repo(repo_path: str, branch: str) -> ToolResult:
     """Fetch latest changes from remote and checkout branch. Assumes repo is already cloned."""
-    import logging
-
-    logger = logging.getLogger(__name__)
 
     repo_name = Path(repo_path).name
 
@@ -140,9 +137,6 @@ async def sync_repo(repo_path: str, branch: str) -> ToolResult:
 
 
 async def fetch_diff(repo_url: str, before_sha: str, after_sha: str) -> ToolResult:
-    import logging
-
-    logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
         logger.warning("tool_git_error tool=fetch_diff error=repo_not_found repo_url=%s", repo_url)
@@ -179,9 +173,6 @@ async def fetch_diff(repo_url: str, before_sha: str, after_sha: str) -> ToolResu
 
 
 async def get_file_content(repo_url: str, file_path: str, ref: str) -> ToolResult:
-    import logging
-
-    logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
         logger.warning(
@@ -204,9 +195,6 @@ async def get_file_content(repo_url: str, file_path: str, ref: str) -> ToolResul
 
 
 async def list_changed_files(repo_url: str, before_sha: str, after_sha: str) -> ToolResult:
-    import logging
-
-    logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
         logger.warning(

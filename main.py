@@ -6,6 +6,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
+from jinja2 import select_autoescape
 from pydantic import BaseModel
 
 from config import get_settings
@@ -414,8 +416,8 @@ async def _notify_email(url: str, recipients_str: str, result) -> None:
 
     # Build HTML body
     html_body = f"""<html><body style="font-family: sans-serif; line-height: 1.6;">
-    <h2>📊 Analysis Complete: {result.repo_name} ({result.branch})</h2>
-    <p><strong>Workflow:</strong> {result.workflow_name}<br/>
+    <h2>📊 Analysis Complete: {html_escape(result.repo_name)} ({html_escape(result.branch)})</h2>
+    <p><strong>Workflow:</strong> {html_escape(result.workflow_name)}<br/>
     <strong>Total Findings:</strong> {total_findings}<br/>
     <strong>Duration:</strong> {(result.completed_at - result.started_at).total_seconds():.1f}s</p>
     <h3>Findings by Agent</h3><ul>
@@ -423,11 +425,11 @@ async def _notify_email(url: str, recipients_str: str, result) -> None:
 
     for agent_result in result.agent_results:
         if agent_result.findings:
-            html_body += f"<li><strong>{agent_result.agent_name}</strong>: {len(agent_result.findings)} finding(s)<ul>"
+            html_body += f"<li><strong>{html_escape(agent_result.agent_name)}</strong>: {len(agent_result.findings)} finding(s)<ul>"
             for finding in agent_result.findings[:5]:
-                html_body += f"<li>[{finding.severity.upper()}] <strong>{finding.title}</strong>"
+                html_body += f"<li>[{finding.severity.upper()}] <strong>{html_escape(finding.title)}</strong>"
                 if finding.description:
-                    html_body += f"<br/>{finding.description[:100]}"
+                    html_body += f"<br/>{html_escape(finding.description[:100])}"
                 html_body += "</li>"
             if len(agent_result.findings) > 5:
                 html_body += f"<li>... and {len(agent_result.findings) - 5} more</li>"

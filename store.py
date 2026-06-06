@@ -50,6 +50,7 @@ class WorkflowStore:
     async def setup(self) -> None:
         """Initialize database connection and create tables with indices."""
         self.conn = await aiosqlite.connect(self.db_path)
+        self.conn.row_factory = aiosqlite.Row
         # Execute each statement separately (aiosqlite can only execute one at a time)
         for statement in _CREATE_TABLE.strip().split(";"):
             statement = statement.strip()
@@ -73,6 +74,7 @@ class WorkflowStore:
             logger.error("store not initialized, cannot save run_id=%s", run_id)
             return
         total = sum(len(r.findings) for r in result.agent_results)
+        severity_dist = {}
         try:
             await self.conn.execute(
                 """INSERT OR REPLACE INTO workflow_runs
@@ -91,6 +93,7 @@ class WorkflowStore:
             )
             for agent_result in result.agent_results:
                 for f in agent_result.findings:
+                    severity_dist[f.severity] = severity_dist.get(f.severity, 0) + 1
                     await self.conn.execute(
                         """INSERT INTO findings
                            (run_id, agent, severity, title, description, recommendation, file_path, line_number)
@@ -107,7 +110,14 @@ class WorkflowStore:
                         ),
                     )
             await self.conn.commit()
-            logger.info("saved run_id=%s total_findings=%d", run_id, total)
+            logger.info(
+                "workflow_persisted run_id=%s workflow=%s repo=%s total_findings=%d severity=%s",
+                run_id,
+                result.workflow_name,
+                result.repo_name,
+                total,
+                severity_dist,
+            )
         except Exception:
             logger.exception("failed to save run_id=%s", run_id)
 
@@ -115,11 +125,13 @@ class WorkflowStore:
         self,
         repo: Optional[str] = None,
         branch: Optional[str] = None,
+        severity: Optional[str] = None,
+        agent: Optional[str] = None,
         limit: int = 20,
     ) -> list[dict]:
         if not self.conn:
             return []
-        conditions: list[str] = []
+        conditions: list[str] = ["1=1"]
         params: list = []
         if repo:
             conditions.append("wr.repo = ?")
@@ -127,11 +139,16 @@ class WorkflowStore:
         if branch:
             conditions.append("wr.branch = ?")
             params.append(branch)
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        if severity:
+            conditions.append("f.severity = ?")
+            params.append(severity.lower())
+        if agent:
+            conditions.append("f.agent LIKE ?")
+            params.append(f"%{agent}%")
+        where = f"WHERE {' AND '.join(conditions)}"
         params.append(max(1, min(limit, 200)))
-        self.conn.row_factory = aiosqlite.Row
         async with self.conn.execute(
-            f"""SELECT wr.run_id, wr.workflow, wr.repo, wr.branch,
+            f"""SELECT DISTINCT wr.run_id, wr.workflow, wr.repo, wr.branch,
                 wr.started_at, wr.completed_at, wr.findings, wr.result_json,
                 ROUND((julianday(wr.completed_at) - julianday(wr.started_at)) * 86400, 1) AS duration_seconds,
                 SUM(CASE WHEN f.severity = 'critical' THEN 1 ELSE 0 END) AS critical_count,
@@ -153,7 +170,6 @@ class WorkflowStore:
     async def get_stats(self) -> dict:
         if not self.conn:
             return {"total_runs": 0, "total_findings": 0, "avg_duration_seconds": None}
-        self.conn.row_factory = aiosqlite.Row
         async with self.conn.execute(
             """SELECT COUNT(*) as total_runs,
                COALESCE(SUM(findings), 0) as total_findings,
@@ -170,7 +186,6 @@ class WorkflowStore:
         if not self.conn:
             return []
         days = max(1, min(days, 365))
-        self.conn.row_factory = aiosqlite.Row
         async with self.conn.execute(
             """SELECT date(wr.started_at) AS date,
                       f.severity,
@@ -189,7 +204,6 @@ class WorkflowStore:
     async def get_run(self, run_id: str) -> Optional[dict]:
         if not self.conn:
             return None
-        self.conn.row_factory = aiosqlite.Row
         async with self.conn.execute(
             "SELECT result_json FROM workflow_runs WHERE run_id = ? LIMIT 1",
             (run_id,),

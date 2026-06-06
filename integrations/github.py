@@ -38,6 +38,7 @@ async def post_pr_findings(
     """
     total = sum(len(r.findings) for r in result.agent_results)
     if total == 0:
+        logger.debug("github_post_findings skipped repo=%s branch=%s reason=no_findings", repo, branch)
         return
 
     headers = {
@@ -50,7 +51,9 @@ async def post_pr_findings(
         pr_number = await _find_pr(client, repo, branch)
         if pr_number is None:
             logger.info(
-                "github: no open PR found for branch=%s repo=%s, skipping comment", branch, repo
+                "github_pr_not_found repo=%s branch=%s skipping_comments",
+                repo,
+                branch,
             )
             return
 
@@ -60,14 +63,17 @@ async def post_pr_findings(
         r = await client.post(url, json={"body": body})
         if r.status_code in (200, 201):
             logger.info(
-                "github: posted PR comment pr=%d repo=%s findings=%d", pr_number, repo, total
+                "github_summary_comment_posted pr=%d repo=%s total_findings=%d",
+                pr_number,
+                repo,
+                total,
             )
         else:
             logger.warning(
-                "github: comment post failed pr=%d status=%d body=%s",
+                "github_summary_comment_failed pr=%d repo=%s status=%d",
                 pr_number,
+                repo,
                 r.status_code,
-                r.text[:200],
             )
 
         # Post inline review comments for findings with file paths and line numbers
@@ -75,7 +81,7 @@ async def post_pr_findings(
             inline_count = await _post_inline_reviews(client, repo, pr_number, result)
             if inline_count > 0:
                 logger.info(
-                    "github: posted inline review comments pr=%d repo=%s count=%d",
+                    "github_inline_comments_posted pr=%d repo=%s count=%d",
                     pr_number,
                     repo,
                     inline_count,
@@ -142,16 +148,16 @@ async def _post_inline_reviews(
         r = await client.post(url, json=review_body)
         if r.status_code in (200, 201):
             count = len(comments_list)
-            logger.debug("github: posted inline review pr=%d comments=%d", pr_number, count)
+            logger.info("github_inline_review_posted pr=%d repo=%s comments=%d", pr_number, repo, count)
         else:
             logger.warning(
-                "github: inline review failed pr=%d status=%d body=%s",
+                "github_inline_review_failed pr=%d repo=%s status=%d",
                 pr_number,
+                repo,
                 r.status_code,
-                r.text[:200],
             )
     except Exception as e:
-        logger.warning("github: inline review error pr=%d: %s", pr_number, e)
+        logger.warning("github_inline_review_error pr=%d repo=%s error=%s", pr_number, repo, e)
 
     return count
 

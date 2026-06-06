@@ -25,6 +25,8 @@ class AgentState(TypedDict):
     findings: list[Finding]
     summary: str
     tokens_used: int
+    tool_calls_made: list[str]  # Track which tools were called
+    llm_call_count: int  # Track number of LLM invocations
 
 
 class BaseAgent(ABC):
@@ -69,30 +71,30 @@ class BaseAgent(ABC):
                     content="ERROR: RAG store not available",
                     is_error=True,
                 )
-            # Search once and track top 3 results
+            # Search once, track results and format in single pass
             try:
                 results = await store.search(collection, query, limit)
-                for doc in results[:3]:
-                    self._knowledge_retrieved.append(
-                        {
-                            "query": query,
-                            "collection": collection,
-                            "content": doc.get("content", "")[:200],
-                            "metadata": doc.get("metadata", {}),
-                            "relevance": 1 - doc.get("distance", 0),
-                        }
-                    )
-                # Format results for LLM
-                formatted_results = []
-                for r in results:
-                    formatted_results.append(
-                        {
-                            "content": r.get("content", "")[:500],
-                            "metadata": r.get("metadata", {}),
-                            "relevance": 1 - r.get("distance", 0),
-                        }
-                    )
                 import json
+
+                formatted_results = []
+                for i, r in enumerate(results):
+                    formatted = {
+                        "content": r.get("content", "")[:500],
+                        "metadata": r.get("metadata", {}),
+                        "relevance": 1 - r.get("distance", 0),
+                    }
+                    formatted_results.append(formatted)
+                    # Track only top 3 for audit trail
+                    if i < 3:
+                        self._knowledge_retrieved.append(
+                            {
+                                "query": query,
+                                "collection": collection,
+                                "content": r.get("content", "")[:200],
+                                "metadata": r.get("metadata", {}),
+                                "relevance": formatted["relevance"],
+                            }
+                        )
 
                 return rag_tools.ToolResult(
                     tool_call_id="search_knowledge",
@@ -236,7 +238,7 @@ class BaseAgent(ABC):
                 ) + response.usage_metadata.get("input_tokens", 0)
 
             logger.info(
-                "agent=%s turn=%d tool_calls=%s content_len=%d tokens=%d",
+                "llm_call agent=%s turn=%d tool_calls=%s content_len=%d tokens=%d",
                 self.name,
                 turn_counter["n"],
                 calls or "none",
@@ -252,7 +254,11 @@ class BaseAgent(ABC):
                         call.get("name"),
                         args_len,
                     )
-            return {"messages": [response], "tokens_used": tokens_this_call}
+            return {
+                "messages": [response],
+                "tokens_used": tokens_this_call,
+                "llm_call_count": state.get("llm_call_count", 0) + 1,
+            }
 
         async def extract_findings(state: AgentState) -> dict:
             summary = ""
@@ -304,8 +310,8 @@ class BaseAgent(ABC):
                 findings = []
 
             if not findings and summary and self.config.extraction_retry:
-                logger.warning(
-                    "agent=%s extraction returned 0 findings, retrying with explicit JSON prompt summary_bytes=%d",
+                logger.info(
+                    "extraction_retry agent=%s summary_bytes=%d",
                     self.name,
                     len(summary),
                 )
@@ -335,7 +341,7 @@ class BaseAgent(ABC):
                             "output_tokens", 0
                         ) + retry_extraction.usage_metadata.get("input_tokens", 0)
 
-                    logger.debug(
+                    logger.info(
                         "extraction_retry_success agent=%s findings=%d",
                         self.name,
                         len(findings),
@@ -356,7 +362,24 @@ class BaseAgent(ABC):
         builder.add_node("extract", extract_findings)
         builder.add_edge(START, "call_model")
         if lc_tools:
-            builder.add_node("tools", ToolNode(lc_tools))
+            tool_node = ToolNode(lc_tools)
+
+            async def tools_with_tracking(state: AgentState) -> dict:
+                """Track which tools are called."""
+                result = await tool_node.ainvoke(state)
+                last_msg = state["messages"][-1]
+                if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                    called_tools = [c["name"] for c in last_msg.tool_calls]
+                    current_calls = state.get("tool_calls_made", [])
+                    result["tool_calls_made"] = current_calls + called_tools
+                    logger.debug(
+                        "tools_executed agent=%s tools=%s",
+                        self.name,
+                        ",".join(called_tools),
+                    )
+                return result
+
+            builder.add_node("tools", tools_with_tracking)
             builder.add_conditional_edges(
                 "call_model", should_continue, {"tools": "tools", "extract": "extract"}
             )
@@ -396,6 +419,8 @@ class BaseAgent(ABC):
         logger.info("=== [%s] SYSTEM PROMPT ===\n%s", self.name, system_prompt)
         logger.info("=== [%s] USER INPUT ===\n%s", self.name, initial_message)
 
+        context_bytes = len(context.additional_context)
+        context_truncated = False
         init_state: AgentState = {
             "messages": [
                 SystemMessage(content=system_prompt),
@@ -404,6 +429,8 @@ class BaseAgent(ABC):
             "findings": [],
             "summary": "",
             "tokens_used": 0,
+            "tool_calls_made": [],
+            "llm_call_count": 0,
         }
 
         invoke_config: dict = {"recursion_limit": self.config.agent_recursion_limit}
@@ -430,6 +457,8 @@ class BaseAgent(ABC):
             findings = final.get("findings", [])
             summary = final.get("summary", "")
             tokens_used = final.get("tokens_used", 0)
+            tool_calls_made = final.get("tool_calls_made", [])
+            llm_call_count = final.get("llm_call_count", 0)
         except GraphRecursionError:
             logger.warning(
                 "agent=%s hit recursion_limit=%d", self.name, self.config.agent_recursion_limit
@@ -439,13 +468,21 @@ class BaseAgent(ABC):
                 "Agent stopped after reaching the recursion limit.",
                 0,
             )
+            tool_calls_made, llm_call_count = [], 0
+
+        if context_bytes > 0 and len(context.additional_context) < context_bytes:
+            context_truncated = True
 
         logger.info(
-            "agent=%s findings=%d tokens=%d knowledge_used=%d",
+            "agent_complete agent=%s findings=%d tools_called=%d llm_calls=%d tokens=%d knowledge_used=%d context_bytes=%d%s",
             self.name,
             len(findings),
+            len(set(tool_calls_made)),
+            llm_call_count,
             tokens_used,
             len(self._knowledge_retrieved),
+            context_bytes,
+            " (truncated)" if context_truncated else "",
         )
         return AgentResult(
             agent_name=self.name,
@@ -455,4 +492,8 @@ class BaseAgent(ABC):
             duration_seconds=round(time.monotonic() - start, 2),
             tokens_used=tokens_used,
             knowledge_used=self._knowledge_retrieved,
+            tool_calls_made=list(set(tool_calls_made)),
+            llm_call_count=llm_call_count,
+            context_received_bytes=context_bytes,
+            context_truncated=context_truncated,
         )

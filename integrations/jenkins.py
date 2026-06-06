@@ -8,6 +8,7 @@ Handles:
 
 import base64
 import logging
+from html import escape as html_escape
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -124,12 +125,19 @@ async def post_jenkins_callback(
         "json": json_data,
     }
 
+    total_findings = sum(len(ar.findings) for ar in result.agent_results)
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(callback_url, json=payload, timeout=30.0)
-            logger.info("jenkins callback run_id=%s status=%d", run_id, r.status_code)
+            logger.info(
+                "jenkins_callback_sent run_id=%s status=%d total_findings=%d payload_bytes=%d",
+                run_id,
+                r.status_code,
+                total_findings,
+                len(payload.get("junit_xml", "")),
+            )
     except Exception as e:
-        logger.warning("jenkins callback failed run_id=%s: %s", run_id, e)
+        logger.warning("jenkins_callback_failed run_id=%s total_findings=%d error=%s", run_id, total_findings, e)
 
 
 async def set_jenkins_build_status(
@@ -160,7 +168,7 @@ async def set_jenkins_build_status(
     description = f"""
 <h3>asdlc Analysis Results</h3>
 <ul>
-    <li>Workflow: {result.workflow_name}</li>
+    <li>Workflow: {html_escape(result.workflow_name)}</li>
     <li>Total Findings: {total_findings}</li>
     <li>Critical: {critical}</li>
     <li>High: {high}</li>
@@ -183,10 +191,19 @@ async def set_jenkins_build_status(
                 timeout=10.0,
             )
             logger.info(
-                "jenkins set_build_status job=%s build=%d status=%d",
+                "jenkins_set_build_status job=%s build=%d status=%d critical=%d high=%d",
                 job_name,
                 build_number,
                 r.status_code,
+                critical,
+                high,
             )
     except Exception as e:
-        logger.warning("jenkins set_build_status failed: %s", e)
+        logger.warning(
+            "jenkins_set_build_status_failed job=%s build=%d critical=%d high=%d error=%s",
+            job_name,
+            build_number,
+            critical,
+            high,
+            e,
+        )
