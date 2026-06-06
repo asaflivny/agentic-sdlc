@@ -25,6 +25,10 @@ class FakeChatModel:
         self._ai = ai_message
         self._fl = finding_list
 
+    async def ainvoke(self, messages, *args, **kwargs):
+        # tool-free default path calls the model directly
+        return self._ai
+
     def bind_tools(self, tools):
         return _FakeRunnable(self._ai)
 
@@ -112,3 +116,60 @@ def test_subgraph_handles_no_findings():
 
     assert result.status == "success"
     assert result.findings == []
+
+
+def test_graph_compiles_without_error():
+    llm = FakeChatModel(AIMessage(content="ok"), FindingList())
+    agent = CodeReviewAgent(llm, Settings())
+    graph = agent._build_graph([])
+    assert graph is not None
+
+
+def test_extraction_retry_fires_when_first_returns_empty():
+    """Retry logic: if first structured extraction → 0 findings but prose is non-empty, call again."""
+    call_count = {"n": 0}
+    retry_finding = Finding(
+        title="Retry Found",
+        description="found on second call",
+        severity=Severity.LOW,
+        recommendation="fix",
+    )
+
+    class _RetryFakeLLM(FakeChatModel):
+        def with_structured_output(self, schema):
+            class _Counter:
+                async def ainvoke(self_, messages, *args, **kwargs):
+                    call_count["n"] += 1
+                    if call_count["n"] == 1:
+                        return FindingList(findings=[])  # first call: empty
+                    return FindingList(findings=[retry_finding])
+            return _Counter()
+
+    llm = _RetryFakeLLM(
+        AIMessage(content="There is a problem here, a division by zero."),
+        FindingList(findings=[]),
+    )
+    agent = CodeReviewAgent(llm, Settings(extraction_retry=True))
+    result = asyncio.run(agent.run(_context()))
+
+    assert call_count["n"] == 2
+    assert len(result.findings) == 1
+    assert result.findings[0].title == "Retry Found"
+
+
+def test_extraction_retry_disabled_does_not_retry():
+    call_count = {"n": 0}
+
+    class _CountingLLM(FakeChatModel):
+        def with_structured_output(self, schema):
+            class _Counter:
+                async def ainvoke(self_, messages, *args, **kwargs):
+                    call_count["n"] += 1
+                    return FindingList(findings=[])
+            return _Counter()
+
+    llm = _CountingLLM(AIMessage(content="There is a problem."), FindingList())
+    agent = CodeReviewAgent(llm, Settings(extraction_retry=False))
+    asyncio.run(agent.run(_context()))
+
+    assert call_count["n"] == 1

@@ -45,6 +45,13 @@ def test_invocation_routes_to_executor():
     assert out == "/tmp/repo@HEAD n=10"
 
 
+def test_arg_override_forces_value():
+    tool = to_langchain_tool(DEFN, _executor, arg_overrides={"repo_url": "/real/path"})
+    # Model passes a bogus repo_url; the override wins.
+    out = asyncio.run(tool.ainvoke({"repo_url": "wrong-name", "ref": "HEAD"}))
+    assert out == "/real/path@HEAD n=10"
+
+
 def test_error_surfaced_as_text():
     defn = ToolDefinition(
         name="failing", description="x",
