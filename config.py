@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     dep_audit_model: str = ""
     test_coverage_model: str = ""
 
+    # Model A/B testing: comma-separated list of agent names to test with alternative models
+    model_ab_test_agents: str = ""  # e.g. "code_reviewer,security_analyst"
+    model_ab_test_model: str = ""  # Alternative model to compare against default
+
     agent_timeout_seconds: int = 180
     max_tokens: int = 4096
     max_concurrent_runs: int = 3
