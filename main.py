@@ -982,3 +982,49 @@ async def agent_metrics():
                 2
             )
     return agent_stats
+
+
+@app.get("/compare/{run_id_1}/{run_id_2}", dependencies=[Depends(_require_api_key)])
+async def compare_runs(run_id_1: str, run_id_2: str):
+    """Compare findings between two runs. Returns added, removed, and unchanged findings."""
+    if not store:
+        return {"error": "store not initialized"}
+    data1 = await store.get_run(run_id_1)
+    data2 = await store.get_run(run_id_2)
+    if not data1 or not data2:
+        raise HTTPException(status_code=404, detail="one or both runs not found")
+
+    # Extract findings from both runs
+    findings_1 = set()
+    findings_2 = set()
+    findings_by_key_1 = {}
+    findings_by_key_2 = {}
+
+    for ar in data1.get("agent_results", []):
+        for f in ar.get("findings", []):
+            key = (f["title"], f.get("file_path", ""), f.get("line_number", 0))
+            findings_1.add(key)
+            findings_by_key_1[key] = f
+
+    for ar in data2.get("agent_results", []):
+        for f in ar.get("findings", []):
+            key = (f["title"], f.get("file_path", ""), f.get("line_number", 0))
+            findings_2.add(key)
+            findings_by_key_2[key] = f
+
+    added = findings_2 - findings_1
+    removed = findings_1 - findings_2
+    unchanged = findings_1 & findings_2
+
+    return {
+        "run_1": run_id_1,
+        "run_2": run_id_2,
+        "added": [findings_by_key_2[k] for k in sorted(added)],
+        "removed": [findings_by_key_1[k] for k in sorted(removed)],
+        "unchanged": [findings_by_key_1[k] for k in sorted(unchanged)],
+        "summary": {
+            "added_count": len(added),
+            "removed_count": len(removed),
+            "unchanged_count": len(unchanged),
+        }
+    }
