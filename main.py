@@ -331,7 +331,13 @@ async def _run_workflow(
                 else:
                     gh_repo = ""
                 if gh_repo:
-                    await post_pr_findings(settings.github_token, gh_repo, event.branch, result)
+                    await post_pr_findings(
+                        settings.github_token,
+                        gh_repo,
+                        event.branch,
+                        result,
+                        post_inline_comments=settings.github_inline_comments,
+                    )
                 else:
                     logger.warning(
                         "github: cannot determine repo owner; set GITHUB_REPO=owner/repo"

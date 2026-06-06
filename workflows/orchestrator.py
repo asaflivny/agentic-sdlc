@@ -178,6 +178,7 @@ class WorkflowOrchestrator:
             workflow_name=workflow.name,
             repo_name=event.repository.name,
             branch=event.branch,
+            commit_sha=event.after,
             started_at=started_at,
             completed_at=completed_at,
             agent_results=results,

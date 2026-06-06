@@ -43,6 +43,7 @@ class WorkflowResult(BaseModel):
     workflow_name: str
     repo_name: str
     branch: str
+    commit_sha: str = ""
     started_at: datetime
     completed_at: datetime
     agent_results: list[AgentResult]

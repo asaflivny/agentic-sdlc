@@ -164,6 +164,37 @@ Findings are published as:
 
 See [JENKINS_INTEGRATION.md](docs/JENKINS_INTEGRATION.md) for complete setup.
 
+## GitHub Integration
+
+When configured with a GitHub token, asdlc posts findings directly to GitHub PRs as review comments:
+
+### Quick Start
+
+```bash
+# Set environment variables
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+export GITHUB_REPO=owner/repo  # optional; auto-detected from push payload if omitted
+export GITHUB_INLINE_COMMENTS=true  # optional; default true
+```
+
+The integration posts:
+- **Summary comment** — overview of findings by agent (always posted)
+- **Inline review comments** — specific findings on changed lines with file path and line number (optional, controlled by `GITHUB_INLINE_COMMENTS`)
+
+### Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| `GITHUB_TOKEN` | _(empty)_ | GitHub personal access token (repo scope required) |
+| `GITHUB_REPO` | _(auto-detected)_ | Repository in `owner/repo` format; auto-detected from push payload if omitted |
+| `GITHUB_INLINE_COMMENTS` | `true` | Post inline review comments on specific lines (requires file_path and line_number in findings) |
+
+### Requirements
+
+- GitHub personal access token with `repo` scope (to post PR comments)
+- Push event payload must include `repository.owner` or `GITHUB_REPO` must be set
+- Inline comments require findings to have both `file_path` and `line_number` set
+
 ## Testing
 
 ```sh
@@ -448,7 +479,11 @@ When any of these files change, update the corresponding targets **in the same s
 | `main.py` | Running Locally, Known Issues, Jenkins Integration section |
 | `agents/<new_file>.py` | Directory Structure, Adding a New Agent, Invariants §1 |
 | `workflows/definitions/<new_file>.py` | Directory Structure |
+| `integrations/github.py` | GitHub Integration section, Known Issues |
 | `integrations/jenkins.py` | Directory Structure, Common Gotchas §6 |
+| `config.py` (new setting) | GitHub Integration section, Invariants §2 |
+| `models/results.py` (new field) | Key Design Patterns §4 |
+| `main.py` (github integration call) | GitHub Integration section |
 
 ### README.md
 
@@ -478,8 +513,8 @@ Any new `.py` file in `agents/` or `tools/` that has no corresponding `tests/tes
 
 ## Future Enhancements
 
-- [ ] Result notifications (Slack, email, PR comments)
+- [x] Result notifications (Slack, email, PR comments with inline reviews)
 - [ ] Multiple model support (fallback, specialized per agent)
 - [ ] Context compression (summarize long findings for sequential mode)
 - [ ] Pluggable rules engine (more flexible routing)
-- [ ] Structured output retry when extraction returns 0 findings
+- [x] Structured output retry when extraction returns 0 findings

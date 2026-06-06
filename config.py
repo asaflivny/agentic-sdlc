@@ -37,6 +37,7 @@ class Settings(BaseSettings):
 
     github_token: str = ""  # post findings as PR review comments when set
     github_repo: str = ""  # owner/repo — auto-detected from push payload if omitted
+    github_inline_comments: bool = True  # post inline review comments on changed lines (requires github_token)
 
     webhook_secret: str = ""
     result_webhook_url: str = ""

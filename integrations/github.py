@@ -27,11 +27,14 @@ async def post_pr_findings(
     repo: str,
     branch: str,
     result: "WorkflowResult",
+    post_inline_comments: bool = True,
 ) -> None:
-    """Find the open PR for *branch* in *repo* and post findings as a comment.
+    """Find the open PR for *branch* in *repo* and post findings as review comments.
 
+    Posts a summary comment plus optional inline comments on specific lines with findings.
     Silently skips if no matching PR is found or if there are no findings.
     *repo* must be in ``owner/name`` form.
+    *post_inline_comments* controls whether to post inline review comments (default True).
     """
     total = sum(len(r.findings) for r in result.agent_results)
     if total == 0:
@@ -51,6 +54,7 @@ async def post_pr_findings(
             )
             return
 
+        # Post summary comment
         body = _build_comment(result, total)
         url = f"{_GH_API}/repos/{repo}/issues/{pr_number}/comments"
         r = await client.post(url, json={"body": body})
@@ -66,6 +70,17 @@ async def post_pr_findings(
                 r.text[:200],
             )
 
+        # Post inline review comments for findings with file paths and line numbers
+        if post_inline_comments:
+            inline_count = await _post_inline_reviews(client, repo, pr_number, result)
+            if inline_count > 0:
+                logger.info(
+                    "github: posted inline review comments pr=%d repo=%s count=%d",
+                    pr_number,
+                    repo,
+                    inline_count,
+                )
+
 
 async def _find_pr(client: httpx.AsyncClient, repo: str, branch: str) -> int | None:
     url = f"{_GH_API}/repos/{repo}/pulls"
@@ -79,6 +94,66 @@ async def _find_pr(client: httpx.AsyncClient, repo: str, branch: str) -> int | N
         if pr.get("head", {}).get("ref") == branch:
             return pr["number"]
     return None
+
+
+async def _post_inline_reviews(
+    client: httpx.AsyncClient, repo: str, pr_number: int, result: "WorkflowResult"
+) -> int:
+    """Post inline review comments for findings with file paths and line numbers.
+
+    Returns the count of inline comments posted. Skips findings without file paths or line numbers.
+    """
+    count = 0
+    comments_list = []
+
+    for agent_result in result.agent_results:
+        for finding in agent_result.findings:
+            # Only add inline comments if we have both file path and line number
+            if not finding.file_path or not finding.line_number:
+                continue
+
+            badge = _SEVERITY_BADGE.get(finding.severity, finding.severity)
+            comment_body = f"{badge} — **{finding.title}**\n\n{finding.description}"
+            if finding.recommendation:
+                comment_body += f"\n\n*Recommendation:* {finding.recommendation}"
+            comment_body += f"\n\n_by {agent_result.agent_name}_"
+
+            comments_list.append(
+                {
+                    "path": finding.file_path,
+                    "line": finding.line_number,
+                    "body": comment_body,
+                }
+            )
+
+    if not comments_list:
+        return 0
+
+    # Post all comments as a single review
+    url = f"{_GH_API}/repos/{repo}/pulls/{pr_number}/reviews"
+    review_body = {
+        "commit_id": result.commit_sha,
+        "body": "asdlc code analysis findings (inline comments below)",
+        "comments": comments_list,
+        "event": "COMMENT",
+    }
+
+    try:
+        r = await client.post(url, json=review_body)
+        if r.status_code in (200, 201):
+            count = len(comments_list)
+            logger.debug("github: posted inline review pr=%d comments=%d", pr_number, count)
+        else:
+            logger.warning(
+                "github: inline review failed pr=%d status=%d body=%s",
+                pr_number,
+                r.status_code,
+                r.text[:200],
+            )
+    except Exception as e:
+        logger.warning("github: inline review error pr=%d: %s", pr_number, e)
+
+    return count
 
 
 def _build_comment(result: "WorkflowResult", total: int) -> str:

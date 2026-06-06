@@ -132,7 +132,7 @@ class WorkflowStore:
         self.conn.row_factory = aiosqlite.Row
         async with self.conn.execute(
             f"""SELECT wr.run_id, wr.workflow, wr.repo, wr.branch,
-                wr.started_at, wr.completed_at, wr.findings,
+                wr.started_at, wr.completed_at, wr.findings, wr.result_json,
                 ROUND((julianday(wr.completed_at) - julianday(wr.started_at)) * 86400, 1) AS duration_seconds,
                 SUM(CASE WHEN f.severity = 'critical' THEN 1 ELSE 0 END) AS critical_count,
                 SUM(CASE WHEN f.severity = 'high'     THEN 1 ELSE 0 END) AS high_count,
@@ -143,7 +143,7 @@ class WorkflowStore:
                 LEFT JOIN findings f ON wr.run_id = f.run_id
                 {where}
                 GROUP BY wr.id, wr.run_id, wr.workflow, wr.repo, wr.branch,
-                         wr.started_at, wr.completed_at, wr.findings
+                         wr.started_at, wr.completed_at, wr.findings, wr.result_json
                 ORDER BY wr.id DESC LIMIT ?""",
             params,
         ) as cursor:
