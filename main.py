@@ -15,7 +15,6 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
-from jinja2 import select_autoescape
 from pydantic import BaseModel
 
 from config import get_settings
@@ -76,10 +75,7 @@ orchestrator: WorkflowOrchestrator | None = None
 store: WorkflowStore | None = None
 rag_store: RAGStore | None = None
 _run_semaphore: asyncio.Semaphore | None = None
-templates = Jinja2Templates(
-    directory="templates",
-    autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=True)
-)
+templates = Jinja2Templates(directory="templates")
 
 # In-memory Prometheus-style counters
 _metrics: dict[str, float] = {
@@ -148,6 +144,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Agentic SDLC", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def cache_request_body(request: Request, call_next):
+    """Cache request body in request.state so it can be read multiple times.
+
+    This enables webhook signature verification to read the body without
+    preventing the route handler from parsing it as JSON.
+    """
+    body = await request.body()
+    request.state.body = body
+
+    async def receive():
+        """Return the cached body for re-reading."""
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._receive = receive
+    response = await call_next(request)
+    return response
 
 
 # ---------------------------------------------------------------------------

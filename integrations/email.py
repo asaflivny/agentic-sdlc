@@ -1,6 +1,7 @@
 """Email webhook notifications for workflow findings."""
 
 import logging
+from html import escape as html_escape
 
 import httpx
 
@@ -27,9 +28,9 @@ async def send_email_notification(
     <html>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333;">
     <h2>📊 Analysis Complete</h2>
-    <p><strong>Repository:</strong> {workflow_result.repo_name}</p>
-    <p><strong>Branch:</strong> {workflow_result.branch}</p>
-    <p><strong>Workflow:</strong> {workflow_result.workflow_name}</p>
+    <p><strong>Repository:</strong> {html_escape(workflow_result.repo_name)}</p>
+    <p><strong>Branch:</strong> {html_escape(workflow_result.branch)}</p>
+    <p><strong>Workflow:</strong> {html_escape(workflow_result.workflow_name)}</p>
     <p><strong>Total Findings:</strong> <span style="font-size: 1.2em; color: #d32f2f;">{total_findings}</span></p>
     <p><strong>Duration:</strong> {(workflow_result.completed_at - workflow_result.started_at).total_seconds():.1f}s</p>
 
@@ -39,7 +40,7 @@ async def send_email_notification(
 
     for agent_result in workflow_result.agent_results:
         if agent_result.findings:
-            html_body += f"<li><strong>{agent_result.agent_name}:</strong> {len(agent_result.findings)} finding(s)<ul>"
+            html_body += f"<li><strong>{html_escape(agent_result.agent_name)}:</strong> {len(agent_result.findings)} finding(s)<ul>"
             for finding in agent_result.findings[:5]:
                 severity_color = {
                     "critical": "#d32f2f",
@@ -48,9 +49,9 @@ async def send_email_notification(
                     "low": "#1976d2",
                     "info": "#455a64",
                 }.get(finding.severity.value, "#666")
-                html_body += f'<li><span style="color: {severity_color};">•</span> <strong>{finding.title}</strong><br/>'
+                html_body += f'<li><span style="color: {severity_color};">•</span> <strong>{html_escape(finding.title)}</strong><br/>'
                 if finding.description:
-                    html_body += f"<em>{finding.description[:100]}</em><br/>"
+                    html_body += f"<em>{html_escape(finding.description[:100])}</em><br/>"
                 html_body += "</li>"
             if len(agent_result.findings) > 5:
                 html_body += f"<li>... and {len(agent_result.findings) - 5} more</li>"
@@ -67,7 +68,7 @@ async def send_email_notification(
     recipients = [r.strip() for r in settings.email_recipients.split(",")]
     payload = {
         "to": recipients,
-        "subject": f"[asdlc] {workflow_result.repo_name} analysis: {total_findings} finding(s)",
+        "subject": f"[asdlc] {html_escape(workflow_result.repo_name)} analysis: {total_findings} finding(s)",
         "html": html_body,
     }
 
