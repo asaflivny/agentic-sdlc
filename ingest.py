@@ -11,6 +11,7 @@ Usage:
     asdlc-ingest list
     asdlc-ingest clear --collection COLLECTION
 """
+
 import argparse
 import asyncio
 import glob
@@ -123,12 +124,16 @@ async def cmd_clear(args):
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Index documents into RAG knowledge base", prog="asdlc-ingest")
+    parser = argparse.ArgumentParser(
+        description="Index documents into RAG knowledge base", prog="asdlc-ingest"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # load subcommand
     load_parser = subparsers.add_parser("load", help="Load documents from files/directories")
-    load_parser.add_argument("--path", required=True, help="Path to file or directory containing documents")
+    load_parser.add_argument(
+        "--path", required=True, help="Path to file or directory containing documents"
+    )
     load_parser.add_argument(
         "--collection",
         required=True,

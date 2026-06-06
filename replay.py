@@ -9,6 +9,7 @@ Usage:
     asdlc replay push_event.json [--url URL] [--secret SECRET]
     asdlc install-hook /path/to/repo [--url URL]
 """
+
 import argparse
 import hashlib
 import hmac
@@ -77,6 +78,7 @@ exit 0
 # replay subcommand
 # ---------------------------------------------------------------------------
 
+
 def _cmd_replay(args: argparse.Namespace) -> None:
     with open(args.event_file, "rb") as f:
         body = f.read()
@@ -106,6 +108,7 @@ def _cmd_replay(args: argparse.Namespace) -> None:
     print("Waiting for workflow to complete (Ctrl-C to stop)...")
 
     import time
+
     for attempt in range(120):
         time.sleep(3)
         try:
@@ -127,13 +130,17 @@ def _cmd_replay(args: argparse.Namespace) -> None:
 # install-hook subcommand
 # ---------------------------------------------------------------------------
 
+
 def _cmd_install_hook(args: argparse.Namespace) -> None:
     import pathlib
 
     repo_path = pathlib.Path(args.repo_path).resolve()
     git_dir = repo_path / ".git"
     if not git_dir.is_dir():
-        print(f"error: {repo_path} does not appear to be a git repository (.git not found)", file=sys.stderr)
+        print(
+            f"error: {repo_path} does not appear to be a git repository (.git not found)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     hook_path = git_dir / "hooks" / "pre-push"
@@ -146,9 +153,14 @@ def _cmd_install_hook(args: argparse.Namespace) -> None:
     try:
         r = httpx.get(url.rsplit("/git/push", 1)[0] + "/healthz", timeout=5.0)
         if r.status_code != 200:
-            print(f"warning: server at {url} returned HTTP {r.status_code} — hook will still be installed", file=sys.stderr)
+            print(
+                f"warning: server at {url} returned HTTP {r.status_code} — hook will still be installed",
+                file=sys.stderr,
+            )
     except Exception as e:
-        print(f"warning: could not reach {url} ({e}) — hook will still be installed", file=sys.stderr)
+        print(
+            f"warning: could not reach {url} ({e}) — hook will still be installed", file=sys.stderr
+        )
 
     hook_content = _HOOK_TEMPLATE.format(url=url, secret="")
     hook_path.write_text(hook_content)
@@ -166,6 +178,7 @@ def _cmd_install_hook(args: argparse.Namespace) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="asdlc",
@@ -175,16 +188,32 @@ def main() -> None:
     sub.required = True
 
     # replay
-    replay_p = sub.add_parser("replay", help="Replay a saved push-event JSON file against the server")
+    replay_p = sub.add_parser(
+        "replay", help="Replay a saved push-event JSON file against the server"
+    )
     replay_p.add_argument("event_file", help="Path to a push-event JSON file")
-    replay_p.add_argument("--url", default="http://localhost:8088/git/push", help="Webhook endpoint (default: %(default)s)")
-    replay_p.add_argument("--secret", default="", help="HMAC webhook secret (or set WEBHOOK_SECRET env var)")
-    replay_p.add_argument("--results-url", default="", help="Base URL for GET /results/{run_id} (auto-derived from --url if omitted)")
+    replay_p.add_argument(
+        "--url",
+        default="http://localhost:8088/git/push",
+        help="Webhook endpoint (default: %(default)s)",
+    )
+    replay_p.add_argument(
+        "--secret", default="", help="HMAC webhook secret (or set WEBHOOK_SECRET env var)"
+    )
+    replay_p.add_argument(
+        "--results-url",
+        default="",
+        help="Base URL for GET /results/{run_id} (auto-derived from --url if omitted)",
+    )
 
     # install-hook
-    hook_p = sub.add_parser("install-hook", help="Install the asdlc pre-push hook in a local git repo")
+    hook_p = sub.add_parser(
+        "install-hook", help="Install the asdlc pre-push hook in a local git repo"
+    )
     hook_p.add_argument("repo_path", help="Path to the local git repository")
-    hook_p.add_argument("--url", default="", help="asdlc webhook URL (default: http://localhost:8088/git/push)")
+    hook_p.add_argument(
+        "--url", default="", help="asdlc webhook URL (default: http://localhost:8088/git/push)"
+    )
 
     args = parser.parse_args()
     if args.command == "replay":
@@ -197,6 +226,7 @@ def main() -> None:
 def replay_main() -> None:
     """Legacy entry point for asdlc-replay (backwards compat)."""
     import sys
+
     sys.argv = ["asdlc", "replay"] + sys.argv[1:]
     main()
 

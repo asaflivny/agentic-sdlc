@@ -1,4 +1,5 @@
 """Parse per-repo .asdlc.yml and apply overrides to a resolved workflow + agent list."""
+
 from __future__ import annotations
 
 import logging
@@ -15,17 +16,20 @@ logger = logging.getLogger(__name__)
 
 class RoutingRule(BaseModel):
     """Custom routing rule from .asdlc.yml."""
+
     pattern: str
     workflow: str
 
 
 class AgentsConfig(BaseModel):
     """Agent configuration from .asdlc.yml."""
+
     exclude: list[str] = Field(default_factory=list)
 
 
 class RepoConfig(BaseModel):
     """Validated schema for .asdlc.yml."""
+
     workflow: Optional[str] = None
     agents: Optional[AgentsConfig] = None
     routing: Optional[list[RoutingRule]] = None
@@ -37,6 +41,7 @@ class RepoConfig(BaseModel):
 def _load_yaml(raw: str) -> dict:
     try:
         import yaml  # type: ignore[import-untyped]
+
         data = yaml.safe_load(raw)
         if not isinstance(data, dict):
             logger.warning("repo_config: .asdlc.yml is not a dict, ignoring")
@@ -45,10 +50,7 @@ def _load_yaml(raw: str) -> dict:
         RepoConfig(**data)
         logger.info("repo_config: loaded and validated .asdlc.yml")
         # Return the validated dict representation (dropping Pydantic internals)
-        return {
-            k: v for k, v in data.items()
-            if k in {"workflow", "agents", "routing"}
-        }
+        return {k: v for k, v in data.items() if k in {"workflow", "agents", "routing"}}
     except ValidationError as e:
         logger.warning("repo_config: schema validation failed: %s", e)
         return {}

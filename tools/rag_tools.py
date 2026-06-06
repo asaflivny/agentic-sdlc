@@ -21,7 +21,13 @@ SEARCH_KNOWLEDGE = ToolDefinition(
             type="string",
             description="Collection to search: business_knowledge, best_practices, known_issues, findings_shared, or code_patterns",
             required=True,
-            enum=["business_knowledge", "best_practices", "known_issues", "findings_shared", "code_patterns"],
+            enum=[
+                "business_knowledge",
+                "best_practices",
+                "known_issues",
+                "findings_shared",
+                "code_patterns",
+            ],
         ),
         ToolParameter(
             name="limit",
@@ -63,27 +69,33 @@ async def search_knowledge(
         if not results:
             return ToolResult(
                 tool_call_id="search_knowledge",
-                content=json.dumps({"results": [], "message": f"No results found for '{query}' in {collection}"}),
+                content=json.dumps(
+                    {"results": [], "message": f"No results found for '{query}' in {collection}"}
+                ),
                 is_error=False,
             )
 
         # Format results for display
         formatted_results = []
         for r in results:
-            formatted_results.append({
-                "content": r.get("content", "")[:500],  # Truncate long content
-                "metadata": r.get("metadata", {}),
-                "relevance": 1 - r.get("distance", 0),  # Convert distance to relevance
-            })
+            formatted_results.append(
+                {
+                    "content": r.get("content", "")[:500],  # Truncate long content
+                    "metadata": r.get("metadata", {}),
+                    "relevance": 1 - r.get("distance", 0),  # Convert distance to relevance
+                }
+            )
 
         return ToolResult(
             tool_call_id="search_knowledge",
-            content=json.dumps({
-                "query": query,
-                "collection": collection,
-                "results_count": len(formatted_results),
-                "results": formatted_results,
-            }),
+            content=json.dumps(
+                {
+                    "query": query,
+                    "collection": collection,
+                    "results_count": len(formatted_results),
+                    "results": formatted_results,
+                }
+            ),
             is_error=False,
         )
 

@@ -5,6 +5,7 @@ the async executors (which return `ToolResult`) in tools/git_tools.py and tools/
 are reused verbatim. We only adapt the *shape* so LangGraph's `ToolNode` / `bind_tools`
 can consume them.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -49,7 +50,10 @@ def _build_args_schema(definition: ToolDefinition, executor: Callable):
                 if sig_default is not None and sig_default.default is not inspect.Parameter.empty
                 else None
             )
-            fields[p.name] = (Optional[py_type], Field(default=default, description=p.description, **extra))
+            fields[p.name] = (
+                Optional[py_type],
+                Field(default=default, description=p.description, **extra),
+            )
 
     return create_model(f"{definition.name}_args", **fields)
 

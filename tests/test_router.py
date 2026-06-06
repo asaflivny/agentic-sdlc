@@ -32,6 +32,7 @@ def _make_event(branch: str = "feature/x", files: list[str] | None = None) -> Pu
 # BranchPatternRule
 # ---------------------------------------------------------------------------
 
+
 def test_branch_rule_matches_main():
     rule = BranchPatternRule(10, "main_branch", r"^(main|master|release/.+)$", FULL_REVIEW)
     assert rule.matches(_make_event("main"))
@@ -53,6 +54,7 @@ def test_branch_rule_returns_correct_workflow():
 # ---------------------------------------------------------------------------
 # FilePatternRule
 # ---------------------------------------------------------------------------
+
 
 def test_file_rule_matches_sensitive_file():
     rule = FilePatternRule(20, "secrets", r"\.(env|pem|key)$", SECURITY_FOCUS)
@@ -82,6 +84,7 @@ def test_file_rule_no_commits():
 # DefaultRule
 # ---------------------------------------------------------------------------
 
+
 def test_default_rule_always_matches():
     rule = DefaultRule()
     assert rule.matches(_make_event("anything"))
@@ -91,6 +94,7 @@ def test_default_rule_always_matches():
 # ---------------------------------------------------------------------------
 # WorkflowRouter — integration
 # ---------------------------------------------------------------------------
+
 
 def test_router_main_branch_routes_full_review():
     router = WorkflowRouter()

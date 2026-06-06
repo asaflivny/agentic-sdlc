@@ -57,8 +57,11 @@ class BaseAgent(ABC):
     def _register_rag_tool(self):
         """Register the search_knowledge tool for RAG queries."""
         self._tool_definitions.append(rag_tools.SEARCH_KNOWLEDGE)
+
         # Wrap search_knowledge to track what was retrieved
-        async def tracked_search_knowledge(query: str, collection: str, limit: int = 5, rag_store=None):
+        async def tracked_search_knowledge(
+            query: str, collection: str, limit: int = 5, rag_store=None
+        ):
             store = rag_store or self.rag_store
             if not store:
                 return rag_tools.ToolResult(
@@ -70,30 +73,37 @@ class BaseAgent(ABC):
             try:
                 results = await store.search(collection, query, limit)
                 for doc in results[:3]:
-                    self._knowledge_retrieved.append({
-                        "query": query,
-                        "collection": collection,
-                        "content": doc.get("content", "")[:200],
-                        "metadata": doc.get("metadata", {}),
-                        "relevance": 1 - doc.get("distance", 0),
-                    })
+                    self._knowledge_retrieved.append(
+                        {
+                            "query": query,
+                            "collection": collection,
+                            "content": doc.get("content", "")[:200],
+                            "metadata": doc.get("metadata", {}),
+                            "relevance": 1 - doc.get("distance", 0),
+                        }
+                    )
                 # Format results for LLM
                 formatted_results = []
                 for r in results:
-                    formatted_results.append({
-                        "content": r.get("content", "")[:500],
-                        "metadata": r.get("metadata", {}),
-                        "relevance": 1 - r.get("distance", 0),
-                    })
+                    formatted_results.append(
+                        {
+                            "content": r.get("content", "")[:500],
+                            "metadata": r.get("metadata", {}),
+                            "relevance": 1 - r.get("distance", 0),
+                        }
+                    )
                 import json
+
                 return rag_tools.ToolResult(
                     tool_call_id="search_knowledge",
-                    content=json.dumps({
-                        "query": query,
-                        "collection": collection,
-                        "results_count": len(formatted_results),
-                        "results": formatted_results,
-                    }),
+                    content=json.dumps(
+                        {
+                            "query": query,
+                            "collection": collection,
+                            "results_count": len(formatted_results),
+                            "results": formatted_results,
+                        }
+                    ),
                     is_error=False,
                 )
             except Exception as e:
@@ -136,33 +146,40 @@ class BaseAgent(ABC):
         if not patterns or not diff:
             return diff
         from fnmatch import fnmatch
-        lines = diff.split('\n')
+
+        lines = diff.split("\n")
         filtered: list[str] = []
         current_file: str | None = None
         in_header = True
         for line in lines:
-            if line.startswith('diff --git'):
+            if line.startswith("diff --git"):
                 in_header = True
-                parts = line.split(' b/')
+                parts = line.split(" b/")
                 if len(parts) == 2:
                     current_file = parts[1]
                     if any(fnmatch(current_file, p) for p in patterns):
                         filtered.append(line)
                     else:
                         current_file = None
-            elif in_header and (line.startswith('index ') or line.startswith('---') or line.startswith('+++') or
-                               line.startswith('old mode') or line.startswith('new mode') or
-                               line.startswith('similarity index') or line.startswith('rename from') or
-                               line.startswith('rename to')):
+            elif in_header and (
+                line.startswith("index ")
+                or line.startswith("---")
+                or line.startswith("+++")
+                or line.startswith("old mode")
+                or line.startswith("new mode")
+                or line.startswith("similarity index")
+                or line.startswith("rename from")
+                or line.startswith("rename to")
+            ):
                 if current_file:
                     filtered.append(line)
-            elif line.startswith('@@'):
+            elif line.startswith("@@"):
                 in_header = False
                 if current_file:
                     filtered.append(line)
             elif current_file:
                 filtered.append(line)
-        return '\n'.join(filtered) if filtered else "(no changes in matching files)"
+        return "\n".join(filtered) if filtered else "(no changes in matching files)"
 
     @staticmethod
     def _coerce_text_tool_call(message: AIMessage, tool_names: set[str]) -> AIMessage:
@@ -177,6 +194,7 @@ class BaseAgent(ABC):
             return message
         import re
         import uuid
+
         for block in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", message.content, re.DOTALL):
             try:
                 data = json.loads(block)
@@ -187,7 +205,9 @@ class BaseAgent(ABC):
                 logger.warning("agent emitted tool call as text, coercing: %s", name)
                 return AIMessage(
                     content="",
-                    tool_calls=[{"name": name, "args": args, "id": f"text_call_{uuid.uuid4().hex[:8]}"}],
+                    tool_calls=[
+                        {"name": name, "args": args, "id": f"text_call_{uuid.uuid4().hex[:8]}"}
+                    ],
                 )
         return message
 
@@ -211,11 +231,17 @@ class BaseAgent(ABC):
 
             tokens_this_call = 0
             if hasattr(response, "usage_metadata") and response.usage_metadata:
-                tokens_this_call = response.usage_metadata.get("output_tokens", 0) + response.usage_metadata.get("input_tokens", 0)
+                tokens_this_call = response.usage_metadata.get(
+                    "output_tokens", 0
+                ) + response.usage_metadata.get("input_tokens", 0)
 
             logger.info(
                 "agent=%s turn=%d tool_calls=%s content_len=%d tokens=%d",
-                self.name, turn_counter["n"], calls or "none", content_len, tokens_this_call,
+                self.name,
+                turn_counter["n"],
+                calls or "none",
+                content_len,
+                tokens_this_call,
             )
             if calls:
                 for call in response.tool_calls:
@@ -243,24 +269,35 @@ class BaseAgent(ABC):
             tokens_used = state.get("tokens_used", 0)
 
             try:
-                extraction: FindingList = await structured_llm.ainvoke([
-                    SystemMessage(content=(
-                        "Extract every concrete issue from the analysis below as structured "
-                        "findings. Preserve titles, severities, file paths, line numbers, and "
-                        "recommendations. If there are no issues, return an empty list."
-                    )),
-                    HumanMessage(content=summary or "No analysis was produced."),
-                ])
+                extraction: FindingList = await structured_llm.ainvoke(
+                    [
+                        SystemMessage(
+                            content=(
+                                "Extract every concrete issue from the analysis below as structured "
+                                "findings. Preserve titles, severities, file paths, line numbers, and "
+                                "recommendations. If there are no issues, return an empty list."
+                            )
+                        ),
+                        HumanMessage(content=summary or "No analysis was produced."),
+                    ]
+                )
                 findings = list(extraction.findings)
 
                 if hasattr(extraction, "usage_metadata") and extraction.usage_metadata:
-                    tokens_used += extraction.usage_metadata.get("output_tokens", 0) + extraction.usage_metadata.get("input_tokens", 0)
+                    tokens_used += extraction.usage_metadata.get(
+                        "output_tokens", 0
+                    ) + extraction.usage_metadata.get("input_tokens", 0)
 
                 logger.debug(
                     "extraction_success agent=%s findings=%d severity_dist=%s",
                     self.name,
                     len(findings),
-                    {s: sum(1 for f in findings if f.severity == s) for s in {"critical", "high", "medium", "low", "info"}} if findings else "{}",
+                    {
+                        s: sum(1 for f in findings if f.severity == s)
+                        for s in {"critical", "high", "medium", "low", "info"}
+                    }
+                    if findings
+                    else "{}",
                 )
             except Exception as e:
                 logger.warning("agent=%s structured extraction failed: %s", self.name, e)
@@ -273,21 +310,30 @@ class BaseAgent(ABC):
                     len(summary),
                 )
                 try:
-                    retry_extraction: FindingList = await structured_llm.ainvoke([
-                        SystemMessage(content=(
-                            "You are a JSON extractor. Read the analysis and output ONLY a JSON "
-                            "object matching this schema exactly:\n"
-                            '{"findings": [{"title": str, "description": str, "severity": '
-                            '"critical"|"high"|"medium"|"low"|"info", "file_path": str|null, '
-                            '"line_number": int|null, "recommendation": str}]}\n'
-                            "If there are genuinely no issues, output: {\"findings\": []}"
-                        )),
-                        HumanMessage(content=summary),
-                    ])
+                    retry_extraction: FindingList = await structured_llm.ainvoke(
+                        [
+                            SystemMessage(
+                                content=(
+                                    "You are a JSON extractor. Read the analysis and output ONLY a JSON "
+                                    "object matching this schema exactly:\n"
+                                    '{"findings": [{"title": str, "description": str, "severity": '
+                                    '"critical"|"high"|"medium"|"low"|"info", "file_path": str|null, '
+                                    '"line_number": int|null, "recommendation": str}]}\n'
+                                    'If there are genuinely no issues, output: {"findings": []}'
+                                )
+                            ),
+                            HumanMessage(content=summary),
+                        ]
+                    )
                     findings = list(retry_extraction.findings)
 
-                    if hasattr(retry_extraction, "usage_metadata") and retry_extraction.usage_metadata:
-                        tokens_used += retry_extraction.usage_metadata.get("output_tokens", 0) + retry_extraction.usage_metadata.get("input_tokens", 0)
+                    if (
+                        hasattr(retry_extraction, "usage_metadata")
+                        and retry_extraction.usage_metadata
+                    ):
+                        tokens_used += retry_extraction.usage_metadata.get(
+                            "output_tokens", 0
+                        ) + retry_extraction.usage_metadata.get("input_tokens", 0)
 
                     logger.debug(
                         "extraction_retry_success agent=%s findings=%d",
@@ -351,7 +397,10 @@ class BaseAgent(ABC):
         logger.info("=== [%s] USER INPUT ===\n%s", self.name, initial_message)
 
         init_state: AgentState = {
-            "messages": [SystemMessage(content=system_prompt), HumanMessage(content=initial_message)],
+            "messages": [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=initial_message),
+            ],
             "findings": [],
             "summary": "",
             "tokens_used": 0,
@@ -368,7 +417,9 @@ class BaseAgent(ABC):
                 diff_hash = hashlib.md5(context.git_diff.encode()).hexdigest()[:8]
                 thread_id = f"{self.name}_{context.push_event.repository.name}_{context.push_event.after[:8]}_{diff_hash}"
 
-                async with AsyncSqliteSaver.from_conn_string(self.config.checkpoint_db_path) as saver:
+                async with AsyncSqliteSaver.from_conn_string(
+                    self.config.checkpoint_db_path
+                ) as saver:
                     graph = builder.compile(checkpointer=saver)
                     invoke_config["configurable"] = {"thread_id": thread_id}
                     final = await graph.ainvoke(init_state, config=invoke_config)
@@ -380,10 +431,22 @@ class BaseAgent(ABC):
             summary = final.get("summary", "")
             tokens_used = final.get("tokens_used", 0)
         except GraphRecursionError:
-            logger.warning("agent=%s hit recursion_limit=%d", self.name, self.config.agent_recursion_limit)
-            findings, summary, tokens_used = [], "Agent stopped after reaching the recursion limit.", 0
+            logger.warning(
+                "agent=%s hit recursion_limit=%d", self.name, self.config.agent_recursion_limit
+            )
+            findings, summary, tokens_used = (
+                [],
+                "Agent stopped after reaching the recursion limit.",
+                0,
+            )
 
-        logger.info("agent=%s findings=%d tokens=%d knowledge_used=%d", self.name, len(findings), tokens_used, len(self._knowledge_retrieved))
+        logger.info(
+            "agent=%s findings=%d tokens=%d knowledge_used=%d",
+            self.name,
+            len(findings),
+            tokens_used,
+            len(self._knowledge_retrieved),
+        )
         return AgentResult(
             agent_name=self.name,
             status="success",

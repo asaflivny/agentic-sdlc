@@ -1,4 +1,5 @@
 """Email webhook notifications for workflow findings."""
+
 import logging
 
 import httpx
@@ -78,7 +79,12 @@ async def send_email_notification(
                 timeout=5.0,
             )
             if r.status_code in (200, 201, 202):
-                logger.info("sent email notification repo=%s recipients=%d findings=%d", workflow_result.repo_name, len(recipients), total_findings)
+                logger.info(
+                    "sent email notification repo=%s recipients=%d findings=%d",
+                    workflow_result.repo_name,
+                    len(recipients),
+                    total_findings,
+                )
                 return True
             else:
                 logger.warning("email send failed status=%d", r.status_code)

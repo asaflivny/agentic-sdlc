@@ -51,11 +51,11 @@ class WorkflowStore:
         """Initialize database connection and create tables with indices."""
         self.conn = await aiosqlite.connect(self.db_path)
         # Execute each statement separately (aiosqlite can only execute one at a time)
-        for statement in _CREATE_TABLE.strip().split(';'):
+        for statement in _CREATE_TABLE.strip().split(";"):
             statement = statement.strip()
             if statement:
                 await self.conn.execute(statement)
-        for statement in _CREATE_FINDINGS_TABLE.strip().split(';'):
+        for statement in _CREATE_FINDINGS_TABLE.strip().split(";"):
             statement = statement.strip()
             if statement:
                 await self.conn.execute(statement)

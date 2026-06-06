@@ -78,15 +78,17 @@ def format_findings_as_json(result) -> dict:
     findings = []
     for agent_result in result.agent_results:
         for finding in agent_result.findings:
-            findings.append({
-                "agent": agent_result.agent_name,
-                "severity": finding.severity,
-                "title": finding.title,
-                "description": finding.description,
-                "file_path": finding.file_path,
-                "line_number": finding.line_number,
-                "recommendation": finding.recommendation,
-            })
+            findings.append(
+                {
+                    "agent": agent_result.agent_name,
+                    "severity": finding.severity,
+                    "title": finding.title,
+                    "description": finding.description,
+                    "file_path": finding.file_path,
+                    "line_number": finding.line_number,
+                    "recommendation": finding.recommendation,
+                }
+            )
 
     return {
         "repo": result.repo_name,
@@ -149,7 +151,9 @@ async def set_jenkins_build_status(
         jenkins_user: Jenkins username for API auth (default: asdlc)
     """
     total_findings = sum(len(ar.findings) for ar in result.agent_results)
-    critical = sum(len([f for f in ar.findings if f.severity == "critical"]) for ar in result.agent_results)
+    critical = sum(
+        len([f for f in ar.findings if f.severity == "critical"]) for ar in result.agent_results
+    )
     high = sum(len([f for f in ar.findings if f.severity == "high"]) for ar in result.agent_results)
 
     # Build description with findings summary
@@ -178,6 +182,11 @@ async def set_jenkins_build_status(
                 headers={"Authorization": f"Basic {credentials}"},
                 timeout=10.0,
             )
-            logger.info("jenkins set_build_status job=%s build=%d status=%d", job_name, build_number, r.status_code)
+            logger.info(
+                "jenkins set_build_status job=%s build=%d status=%d",
+                job_name,
+                build_number,
+                r.status_code,
+            )
     except Exception as e:
         logger.warning("jenkins set_build_status failed: %s", e)

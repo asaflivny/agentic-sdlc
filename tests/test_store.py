@@ -1,4 +1,5 @@
 """Tests for WorkflowStore — SQLite round-trip via tmp_path fixture."""
+
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path

@@ -1,4 +1,5 @@
 """Slack webhook notifications for workflow findings."""
+
 import logging
 
 import httpx
@@ -37,7 +38,9 @@ async def post_slack_notification(
     severity_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
     for severity in severity_order:
         if severity in findings_by_severity:
-            emoji = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵", "INFO": "⚪"}.get(severity, "")
+            emoji = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵", "INFO": "⚪"}.get(
+                severity, ""
+            )
             findings_text += f"\n{emoji} *{severity}* ({len(findings_by_severity[severity])})\n"
             findings_text += "\n".join(findings_by_severity[severity][:3])
             if len(findings_by_severity[severity]) > 3:
@@ -64,13 +67,15 @@ async def post_slack_notification(
     }
 
     if findings_text:
-        message["blocks"].append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": findings_text,
-            },
-        })
+        message["blocks"].append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": findings_text,
+                },
+            }
+        )
 
     # Add mentions if configured
     if settings.slack_mention_channels:
@@ -85,7 +90,11 @@ async def post_slack_notification(
                 timeout=5.0,
             )
             if r.status_code == 200:
-                logger.info("posted slack notification repo=%s findings=%d", workflow_result.repo_name, total_findings)
+                logger.info(
+                    "posted slack notification repo=%s findings=%d",
+                    workflow_result.repo_name,
+                    total_findings,
+                )
                 return True
             else:
                 logger.warning("slack post failed status=%d", r.status_code)

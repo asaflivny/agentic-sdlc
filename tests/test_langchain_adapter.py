@@ -54,7 +54,8 @@ def test_arg_override_forces_value():
 
 def test_error_surfaced_as_text():
     defn = ToolDefinition(
-        name="failing", description="x",
+        name="failing",
+        description="x",
         parameters=[ToolParameter("repo_url", "string", "Repo path")],
     )
     tool = to_langchain_tool(defn, _failing_executor)

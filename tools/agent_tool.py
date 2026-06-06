@@ -53,11 +53,13 @@ class AgentTool:
 
         try:
             result = await self.agent.run(sub_context)
-            payload = json.dumps({
-                "agent": self.agent.name,
-                "summary": result.summary[:3000],
-                "findings": [f.model_dump() for f in result.findings],
-            })
+            payload = json.dumps(
+                {
+                    "agent": self.agent.name,
+                    "summary": result.summary[:3000],
+                    "findings": [f.model_dump() for f in result.findings],
+                }
+            )
             return ToolResult("", payload)
         except Exception as e:
             logger.exception("sub-agent %s failed", self.agent.name)

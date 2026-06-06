@@ -1,5 +1,6 @@
 """Prove the LangGraph agent subgraph returns structured Finding objects via
 with_structured_output — no ---FINDINGS--- sentinel text involved."""
+
 import asyncio
 
 from langchain_core.messages import AIMessage
@@ -89,7 +90,9 @@ def test_coerce_text_tool_call_promotes_to_real_tool_call():
     from agents.base import BaseAgent
 
     # qwen-style: tool call emitted as a fenced JSON block in content, not native tool_calls.
-    msg = AIMessage(content='```json\n{"name": "fetch_git_diff", "arguments": {"repo_url": "r", "before_sha": "a", "after_sha": "b"}}\n```')
+    msg = AIMessage(
+        content='```json\n{"name": "fetch_git_diff", "arguments": {"repo_url": "r", "before_sha": "a", "after_sha": "b"}}\n```'
+    )
     out = BaseAgent._coerce_text_tool_call(msg, {"fetch_git_diff", "get_file_content"})
     assert len(out.tool_calls) == 1
     assert out.tool_calls[0]["name"] == "fetch_git_diff"
@@ -143,6 +146,7 @@ def test_extraction_retry_fires_when_first_returns_empty():
                     if call_count["n"] == 1:
                         return FindingList(findings=[])  # first call: empty
                     return FindingList(findings=[retry_finding])
+
             return _Counter()
 
     llm = _RetryFakeLLM(
@@ -166,6 +170,7 @@ def test_extraction_retry_disabled_does_not_retry():
                 async def ainvoke(self_, messages, *args, **kwargs):
                     call_count["n"] += 1
                     return FindingList(findings=[])
+
             return _Counter()
 
     llm = _CountingLLM(AIMessage(content="There is a problem."), FindingList())

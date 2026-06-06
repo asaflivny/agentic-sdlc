@@ -59,14 +59,19 @@ class WorkflowOrchestrator:
     async def _load_repo_overrides_cached(self, event: "PushEvent") -> dict:
         """Load repo config with caching by (repo_url, after_sha)."""
         from workflows.repo_config import load_repo_overrides
+
         cache_key = (event.repository.clone_url, event.after)
         if cache_key in self._repo_config_cache:
-            logger.debug("repo_config cache hit repo=%s sha=%s", event.repository.name, event.after[:8])
+            logger.debug(
+                "repo_config cache hit repo=%s sha=%s", event.repository.name, event.after[:8]
+            )
             return self._repo_config_cache[cache_key]
         overrides = await load_repo_overrides(event)
         self._repo_config_cache[cache_key] = overrides
         if overrides:
-            logger.info("repo_config cache store repo=%s sha=%s", event.repository.name, event.after[:8])
+            logger.info(
+                "repo_config cache store repo=%s sha=%s", event.repository.name, event.after[:8]
+            )
         return overrides
 
     async def run(
@@ -94,26 +99,34 @@ class WorkflowOrchestrator:
                     "known_issues",
                     event.repository.name,
                     limit=3,
-                    where={"repo": {"$in": [event.repository.name, "global"]}}
+                    where={"repo": {"$in": [event.repository.name, "global"]}},
                 )
                 if known_issues:
                     critical_knowledge += "=== Known Issues for this Repository ===\n"
                     for result in known_issues:
                         critical_knowledge += f"- {result.get('content', '')[:200]}\n"
                     critical_knowledge += "\n"
-                logger.debug("rag_search_completed collection=known_issues results=%d", len(known_issues))
+                logger.debug(
+                    "rag_search_completed collection=known_issues results=%d", len(known_issues)
+                )
             except Exception as e:
                 logger.warning("Failed to retrieve knowledge from RAG: %s", e)
 
         from workflows.repo_config import apply_overrides
+
         repo_overrides = await self._load_repo_overrides_cached(event)
         agent_names = [spec.agent_class.name for spec in workflow.agent_specs]
         workflow, agent_names = apply_overrides(workflow, agent_names, repo_overrides)
         agent_name_set = set(agent_names)
         if len(agent_name_set) < len(agent_names):
-            logger.debug("repo_config_applied original_agents=%d effective_agents=%d", len(agent_names), len(agent_name_set))
+            logger.debug(
+                "repo_config_applied original_agents=%d effective_agents=%d",
+                len(agent_names),
+                len(agent_name_set),
+            )
         filtered_specs = [s for s in workflow.agent_specs if s.agent_class.name in agent_name_set]
         from workflows.base import WorkflowDefinition
+
         effective_workflow = WorkflowDefinition(
             name=workflow.name,
             description=workflow.description,
@@ -127,7 +140,9 @@ class WorkflowOrchestrator:
             len(agents),
             "parallel" if workflow.mode == "parallel" else "sequential",
         )
-        builder = self._build_workflow_graph(effective_workflow, agents, effective_workflow.agent_specs)
+        builder = self._build_workflow_graph(
+            effective_workflow, agents, effective_workflow.agent_specs
+        )
 
         init_state: WorkflowState = {
             "push_event": event,
@@ -210,7 +225,9 @@ class WorkflowOrchestrator:
         agents = []
         for i, spec in enumerate(workflow.agent_specs):
             model = self.config.model_for_agent(spec.agent_class.name)
-            agent = spec.agent_class(self._make_llm(spec.agent_class.name), self.config, self.rag_store)
+            agent = spec.agent_class(
+                self._make_llm(spec.agent_class.name), self.config, self.rag_store
+            )
             logger.debug(
                 "agent_init order=%d name=%s model=%s",
                 i + 1,
@@ -239,7 +256,9 @@ class WorkflowOrchestrator:
     # fan-out (results merged by the operator.add reducer).
     # ------------------------------------------------------------------
 
-    def _make_agent_node(self, agent: BaseAgent, sequential: bool, file_filter: list[str] | None = None):
+    def _make_agent_node(
+        self, agent: BaseAgent, sequential: bool, file_filter: list[str] | None = None
+    ):
         async def node(state: WorkflowState) -> dict:
             git_diff = state["git_diff"]
             if file_filter:
@@ -285,7 +304,9 @@ class WorkflowOrchestrator:
 
         return node
 
-    def _build_workflow_graph(self, workflow: WorkflowDefinition, agents: list[BaseAgent], specs: list) -> StateGraph:
+    def _build_workflow_graph(
+        self, workflow: WorkflowDefinition, agents: list[BaseAgent], specs: list
+    ) -> StateGraph:
         builder = StateGraph(WorkflowState)
         sequential = workflow.mode != ExecutionMode.PARALLEL
         # Map agent.name -> spec for quick lookup
@@ -297,7 +318,10 @@ class WorkflowOrchestrator:
                 node_name = f"{agent.name}_{i}"
                 spec = spec_map.get(agent.name)
                 file_filter = spec.file_filter if spec else None
-                builder.add_node(node_name, self._make_agent_node(agent, sequential=True, file_filter=file_filter))
+                builder.add_node(
+                    node_name,
+                    self._make_agent_node(agent, sequential=True, file_filter=file_filter),
+                )
                 builder.add_edge(prev, node_name)
                 prev = node_name
             builder.add_edge(prev, END)
@@ -306,13 +330,18 @@ class WorkflowOrchestrator:
                 node_name = f"{agent.name}_{i}"
                 spec = spec_map.get(agent.name)
                 file_filter = spec.file_filter if spec else None
-                builder.add_node(node_name, self._make_agent_node(agent, sequential=False, file_filter=file_filter))
+                builder.add_node(
+                    node_name,
+                    self._make_agent_node(agent, sequential=False, file_filter=file_filter),
+                )
                 builder.add_edge(START, node_name)
                 builder.add_edge(node_name, END)
 
         return builder
 
-    def _order_results(self, results: list[AgentResult], agents: list[BaseAgent]) -> list[AgentResult]:
+    def _order_results(
+        self, results: list[AgentResult], agents: list[BaseAgent]
+    ) -> list[AgentResult]:
         """Restore deterministic agent-definition order (parallel branches finish in any order)."""
         by_name: dict[str, list[AgentResult]] = {}
         for r in results:
@@ -335,7 +364,7 @@ class WorkflowOrchestrator:
         chunks: list[str] = []
         offset = 0
         while offset < len(diff):
-            chunks.append(diff[offset: offset + chunk_bytes])
+            chunks.append(diff[offset : offset + chunk_bytes])
             offset += chunk_bytes - overlap
         logger.warning(
             "diff chunking enabled total_size_kb=%d num_chunks=%d chunk_size_kb=%d overlap_kb=%d",
@@ -346,7 +375,9 @@ class WorkflowOrchestrator:
         )
         return chunks
 
-    async def _run_chunked(self, agent: BaseAgent, context: AgentContext, chunks: list[str]) -> AgentResult:
+    async def _run_chunked(
+        self, agent: BaseAgent, context: AgentContext, chunks: list[str]
+    ) -> AgentResult:
         """Run the agent once per diff chunk and merge findings."""
         all_results: list[AgentResult] = []
         for i, chunk in enumerate(chunks):
@@ -375,8 +406,10 @@ class WorkflowOrchestrator:
         merged_findings = [f for r in all_results for f in r.findings]
         merged_summary = "\n\n".join(r.summary for r in all_results if r.summary)
         statuses = {r.status for r in all_results}
-        final_status = "success" if statuses == {"success"} else (
-            "error" if "error" in statuses else "timeout"
+        final_status = (
+            "success"
+            if statuses == {"success"}
+            else ("error" if "error" in statuses else "timeout")
         )
         total_duration = sum(r.duration_seconds or 0 for r in all_results)
         total_tokens = sum(r.tokens_used for r in all_results)
@@ -398,6 +431,7 @@ class WorkflowOrchestrator:
 
     async def _run_with_timeout(self, agent: BaseAgent, context: AgentContext) -> AgentResult:
         import time
+
         logger.debug(
             "agent_start agent=%s diff_size_kb=%d context_bytes=%d",
             agent.name,
@@ -419,7 +453,9 @@ class WorkflowOrchestrator:
             return AgentResult(agent_name=agent.name, status="timeout", summary="Agent timed out.")
         except Exception as e:
             elapsed = round(time.monotonic() - start, 2)
-            logger.exception("agent_error agent=%s elapsed_sec=%.2f error=%s", agent.name, elapsed, e)
+            logger.exception(
+                "agent_error agent=%s elapsed_sec=%.2f error=%s", agent.name, elapsed, e
+            )
             return AgentResult(agent_name=agent.name, status="error", summary=str(e))
 
     def _deduplicate_findings(self, results: list[AgentResult]) -> list[AgentResult]:
@@ -436,7 +472,9 @@ class WorkflowOrchestrator:
                     unique.append(f)
                 else:
                     dropped_count += 1
-                    logger.debug("dedup: dropped duplicate finding title='%s' from %s", f.title, r.agent_name)
+                    logger.debug(
+                        "dedup: dropped duplicate finding title='%s' from %s", f.title, r.agent_name
+                    )
             if dropped_count > 0 and len(unique) < len(r.findings):
                 logger.debug(
                     "dedup_agent agent=%s original_findings=%d unique_findings=%d dropped=%d",
@@ -455,7 +493,9 @@ class WorkflowOrchestrator:
         lines = [f"\n\n{agent_display_name} completed ({len(result.findings)} finding(s))."]
         for f in result.findings:
             loc = f" ({f.file_path}:{f.line_number})" if f.file_path else ""
-            lines.append(f"  [{f.severity.upper()}] {f.title}{loc} — {f.recommendation or f.description[:120]}")
+            lines.append(
+                f"  [{f.severity.upper()}] {f.title}{loc} — {f.recommendation or f.description[:120]}"
+            )
         return "\n".join(lines)
 
     async def _fetch_diff(self, event: PushEvent) -> str:

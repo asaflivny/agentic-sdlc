@@ -40,9 +40,16 @@ class _JsonFormatter(logging.Formatter):
             obj["exc"] = self.formatException(record.exc_info)
         # Absorb any extra kwargs passed to the log call (e.g. run_id=, repo=)
         skip = logging.LogRecord.__dict__.keys() | {
-            "message", "asctime", "msecs", "relativeCreated",
-            "thread", "threadName", "processName", "process",
-            "taskName", "stack_info",
+            "message",
+            "asctime",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "taskName",
+            "stack_info",
         }
         for k, v in record.__dict__.items():
             if k not in skip and not k.startswith("_"):
@@ -95,9 +102,12 @@ async def lifespan(app: FastAPI):
 
     # Clone repos on startup
     from tools.git_tools import clone_or_verify_repos
+
     cloned_repos = await clone_or_verify_repos(settings.repos_root, settings.git_clone_sources)
     if cloned_repos:
-        logger.info("repos initialized count=%d: %s", len(cloned_repos), ", ".join(cloned_repos.keys()))
+        logger.info(
+            "repos initialized count=%d: %s", len(cloned_repos), ", ".join(cloned_repos.keys())
+        )
 
     orchestrator = WorkflowOrchestrator(settings)
     store = WorkflowStore(settings.db_path)
@@ -138,6 +148,7 @@ app = FastAPI(title="Agentic SDLC", lifespan=lifespan)
 # Auth helpers
 # ---------------------------------------------------------------------------
 
+
 def _require_api_key(api_key: str = Depends(_api_key_header)) -> None:
     settings = get_settings()
     if settings.api_key and api_key != settings.api_key:
@@ -147,6 +158,7 @@ def _require_api_key(api_key: str = Depends(_api_key_header)) -> None:
 # ---------------------------------------------------------------------------
 # Rate limiting helper
 # ---------------------------------------------------------------------------
+
 
 def _check_rate_limit(repo_name: str) -> None:
     settings = get_settings()
@@ -169,6 +181,7 @@ def _check_rate_limit(repo_name: str) -> None:
 # ---------------------------------------------------------------------------
 # Webhook ingestion
 # ---------------------------------------------------------------------------
+
 
 @app.post("/git/push", status_code=202, dependencies=[Depends(verify_webhook_signature)])
 async def git_push(event: PushEvent, background_tasks: BackgroundTasks, request: Request):
@@ -231,6 +244,7 @@ async def _run_workflow(
         try:
             # Sync repository before analysis
             from tools.git_tools import sync_repo
+
             settings = get_settings()
 
             # Determine repo path: either from event.repository.clone_url or repos_root/{repo_name}
@@ -243,11 +257,26 @@ async def _run_workflow(
             if Path(repo_path).exists():
                 sync_result = await sync_repo(repo_path, event.branch)
                 if sync_result.is_error:
-                    logger.warning("repo_sync failed run_id=%s repo=%s error=%s", run_id, repo_name, sync_result.content)
+                    logger.warning(
+                        "repo_sync failed run_id=%s repo=%s error=%s",
+                        run_id,
+                        repo_name,
+                        sync_result.content,
+                    )
                 else:
-                    logger.info("repo_sync complete run_id=%s repo=%s branch=%s", run_id, repo_name, event.branch)
+                    logger.info(
+                        "repo_sync complete run_id=%s repo=%s branch=%s",
+                        run_id,
+                        repo_name,
+                        event.branch,
+                    )
             else:
-                logger.error("repo_sync skipped run_id=%s repo=%s reason=not_found path=%s", run_id, repo_name, repo_path)
+                logger.error(
+                    "repo_sync skipped run_id=%s repo=%s reason=not_found path=%s",
+                    run_id,
+                    repo_name,
+                    repo_path,
+                )
 
             result = await orchestrator.run(workflow, event, run_id=run_id)
             total_findings = sum(len(r.findings) for r in result.agent_results)
@@ -281,14 +310,20 @@ async def _run_workflow(
                 await _notify_email(settings.email_webhook_url, settings.email_recipients, result)
             if jenkins_callback_url:
                 from integrations.jenkins import post_jenkins_callback, set_jenkins_build_status
+
                 await post_jenkins_callback(jenkins_callback_url, run_id, result)
                 if jenkins_job_name and jenkins_build_number and jenkins_api_token:
                     jenkins_url = jenkins_callback_url.rsplit("/", 2)[0]  # Extract base URL
                     await set_jenkins_build_status(
-                        jenkins_url, jenkins_job_name, jenkins_build_number, jenkins_api_token, result
+                        jenkins_url,
+                        jenkins_job_name,
+                        jenkins_build_number,
+                        jenkins_api_token,
+                        result,
                     )
             if settings.github_token:
                 from integrations.github import post_pr_findings
+
                 if settings.github_repo:
                     gh_repo = settings.github_repo
                 elif event.repository.owner:
@@ -298,7 +333,9 @@ async def _run_workflow(
                 if gh_repo:
                     await post_pr_findings(settings.github_token, gh_repo, event.branch, result)
                 else:
-                    logger.warning("github: cannot determine repo owner; set GITHUB_REPO=owner/repo")
+                    logger.warning(
+                        "github: cannot determine repo owner; set GITHUB_REPO=owner/repo"
+                    )
         except Exception:
             logger.exception("workflow failed run_id=%s repo=%s", run_id, event.repository.name)
 
@@ -315,8 +352,7 @@ async def _notify_result(url: str, run_id: str, result) -> None:
 
 async def _notify_slack(url: str, run_id: str, result) -> None:
     all_findings = [
-        f for r in result.agent_results for f in r.findings
-        if f.severity in ("critical", "high")
+        f for r in result.agent_results for f in r.findings if f.severity in ("critical", "high")
     ]
     if not all_findings:
         return
@@ -392,6 +428,7 @@ async def _notify_email(url: str, recipients_str: str, result) -> None:
 # Manual scan
 # ---------------------------------------------------------------------------
 
+
 class ScanRequest(BaseModel):
     repo_path: str
     branch: str = "main"
@@ -407,13 +444,17 @@ class ScanRequest(BaseModel):
 async def scan(req: ScanRequest, background_tasks: BackgroundTasks):
     """Trigger a full review on a local repo without a git push event."""
     from pathlib import Path
+
     repo_path = Path(req.repo_path).resolve()
     if not repo_path.exists():
-        raise HTTPException(status_code=400, detail=f"Repository path does not exist: {req.repo_path}")
+        raise HTTPException(
+            status_code=400, detail=f"Repository path does not exist: {req.repo_path}"
+        )
 
     after = req.after_sha
     if after == "HEAD":
         from tools.git_tools import _resolve_git_dir, _git
+
         git_dir = _resolve_git_dir(str(repo_path))
         if not git_dir:
             raise HTTPException(status_code=400, detail=f"Cannot resolve git repo at: {repo_path}")
@@ -442,15 +483,23 @@ async def scan(req: ScanRequest, background_tasks: BackgroundTasks):
         jenkins_build_number=req.jenkins_build_number,
         jenkins_api_token=req.jenkins_api_token,
     )
-    return {"status": "accepted", "run_id": run_id, "workflow": "full_review", "repo": event.repository.name}
+    return {
+        "status": "accepted",
+        "run_id": run_id,
+        "workflow": "full_review",
+        "repo": event.repository.name,
+    }
 
 
 # ---------------------------------------------------------------------------
 # RAG Ingestion
 # ---------------------------------------------------------------------------
 
+
 class IngestRequest(BaseModel):
-    collection: str  # business_knowledge, best_practices, known_issues, findings_shared, code_patterns
+    collection: (
+        str  # business_knowledge, best_practices, known_issues, findings_shared, code_patterns
+    )
     repo: str = "global"
     documents: list[dict]  # list of {content: str, metadata: dict (optional)}
 
@@ -480,7 +529,12 @@ async def ingest(req: IngestRequest):
                 doc["metadata"]["repo"] = req.repo
 
         await rag_store.index_documents(req.collection, req.documents)
-        logger.info("ingest_completed collection=%s repo=%s count=%d", req.collection, req.repo, len(req.documents))
+        logger.info(
+            "ingest_completed collection=%s repo=%s count=%d",
+            req.collection,
+            req.repo,
+            len(req.documents),
+        )
 
         return {
             "status": "success",
@@ -496,6 +550,7 @@ async def ingest(req: IngestRequest):
 # ---------------------------------------------------------------------------
 # Results API
 # ---------------------------------------------------------------------------
+
 
 @app.get("/results", dependencies=[Depends(_require_api_key)])
 async def list_results(
@@ -516,6 +571,7 @@ async def list_results(
         if severity or agent or search:
             # Extract findings from result_json
             import json as json_lib
+
             try:
                 data = json_lib.loads(run.get("result_json", "{}"))
                 agent_results = data.get("agent_results", [])
@@ -525,20 +581,28 @@ async def list_results(
 
                 # Filter by severity
                 if severity:
-                    run_findings = [f for f in run_findings if f.get("severity") == severity.lower()]
+                    run_findings = [
+                        f for f in run_findings if f.get("severity") == severity.lower()
+                    ]
 
                 # Filter by agent
                 if agent:
-                    run_findings = [f for ar in agent_results
-                                  if agent.lower() in str(ar.get("agent_name", "")).lower()
-                                  for f in ar.get("findings", [])]
+                    run_findings = [
+                        f
+                        for ar in agent_results
+                        if agent.lower() in str(ar.get("agent_name", "")).lower()
+                        for f in ar.get("findings", [])
+                    ]
 
                 # Filter by search text
                 if search:
                     search_lower = search.lower()
-                    run_findings = [f for f in run_findings
-                                  if search_lower in f.get("title", "").lower()
-                                  or search_lower in f.get("description", "").lower()]
+                    run_findings = [
+                        f
+                        for f in run_findings
+                        if search_lower in f.get("title", "").lower()
+                        or search_lower in f.get("description", "").lower()
+                    ]
 
                 if run_findings or not (severity or agent or search):
                     filtered.append(run)
@@ -562,6 +626,7 @@ async def export_results_json(
     """Export findings as JSON."""
     runs = await store.list_runs(repo=repo, branch=branch, limit=1000)
     import json as json_lib
+
     findings_list = []
     for run in runs:
         try:
@@ -570,18 +635,21 @@ async def export_results_json(
                 for finding in ar.get("findings", []):
                     if severity and finding.get("severity") != severity.lower():
                         continue
-                    findings_list.append({
-                        "run_id": run.get("run_id"),
-                        "repo": run.get("repo"),
-                        "branch": run.get("branch"),
-                        "agent": ar.get("agent_name"),
-                        "timestamp": run.get("completed_at"),
-                        **finding,
-                    })
+                    findings_list.append(
+                        {
+                            "run_id": run.get("run_id"),
+                            "repo": run.get("repo"),
+                            "branch": run.get("branch"),
+                            "agent": ar.get("agent_name"),
+                            "timestamp": run.get("completed_at"),
+                            **finding,
+                        }
+                    )
         except Exception:
             pass
 
     from fastapi.responses import JSONResponse
+
     return JSONResponse(content=findings_list)
 
 
@@ -598,10 +666,22 @@ async def export_results_csv(
     import json as json_lib
 
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=[
-        "run_id", "repo", "branch", "agent", "severity", "title", "description",
-        "file_path", "line_number", "recommendation", "timestamp"
-    ])
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "run_id",
+            "repo",
+            "branch",
+            "agent",
+            "severity",
+            "title",
+            "description",
+            "file_path",
+            "line_number",
+            "recommendation",
+            "timestamp",
+        ],
+    )
     writer.writeheader()
 
     for run in runs:
@@ -611,27 +691,30 @@ async def export_results_csv(
                 for finding in ar.get("findings", []):
                     if severity and finding.get("severity") != severity.lower():
                         continue
-                    writer.writerow({
-                        "run_id": run.get("run_id"),
-                        "repo": run.get("repo"),
-                        "branch": run.get("branch"),
-                        "agent": ar.get("agent_name"),
-                        "severity": finding.get("severity", ""),
-                        "title": finding.get("title", ""),
-                        "description": finding.get("description", ""),
-                        "file_path": finding.get("file_path", ""),
-                        "line_number": finding.get("line_number", ""),
-                        "recommendation": finding.get("recommendation", ""),
-                        "timestamp": run.get("completed_at", ""),
-                    })
+                    writer.writerow(
+                        {
+                            "run_id": run.get("run_id"),
+                            "repo": run.get("repo"),
+                            "branch": run.get("branch"),
+                            "agent": ar.get("agent_name"),
+                            "severity": finding.get("severity", ""),
+                            "title": finding.get("title", ""),
+                            "description": finding.get("description", ""),
+                            "file_path": finding.get("file_path", ""),
+                            "line_number": finding.get("line_number", ""),
+                            "recommendation": finding.get("recommendation", ""),
+                            "timestamp": run.get("completed_at", ""),
+                        }
+                    )
         except Exception:
             pass
 
     from fastapi.responses import StreamingResponse
+
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=findings.csv"}
+        headers={"Content-Disposition": "attachment; filename=findings.csv"},
     )
 
 
@@ -653,6 +736,7 @@ async def findings_trend(repo_name: str, days: int = 30):
 # ---------------------------------------------------------------------------
 # RAG Console
 # ---------------------------------------------------------------------------
+
 
 @app.get("/rag/console", response_class=HTMLResponse)
 async def rag_console():
@@ -713,10 +797,12 @@ async def rag_browse(collection: str = "best_practices", limit: int = 100):
         if results and results.get("documents"):
             for i, doc in enumerate(results["documents"]):
                 metadata = results["metadatas"][i] if results.get("metadatas") else {}
-                documents.append({
-                    "content": doc,
-                    "metadata": metadata,
-                })
+                documents.append(
+                    {
+                        "content": doc,
+                        "metadata": metadata,
+                    }
+                )
 
         return {
             "collection": collection,
@@ -731,10 +817,13 @@ async def rag_browse(collection: str = "best_practices", limit: int = 100):
 # Dashboard
 # ---------------------------------------------------------------------------
 
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     runs, stats = await asyncio.gather(store.list_runs(limit=50), store.get_stats())
-    return templates.TemplateResponse(request=request, name="dashboard.html", context={"runs": runs, "stats": stats})
+    return templates.TemplateResponse(
+        request=request, name="dashboard.html", context={"runs": runs, "stats": stats}
+    )
 
 
 @app.get("/run/{run_id}", response_class=HTMLResponse)
@@ -750,14 +839,21 @@ async def run_detail_page(request: Request, run_id: str):
     except Exception:
         duration_seconds = None
     return templates.TemplateResponse(
-        request=request, name="run_detail.html",
-        context={"run_id": run_id, "result": data, "total_findings": total_findings, "duration_seconds": duration_seconds},
+        request=request,
+        name="run_detail.html",
+        context={
+            "run_id": run_id,
+            "result": data,
+            "total_findings": total_findings,
+            "duration_seconds": duration_seconds,
+        },
     )
 
 
 # ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------
+
 
 @app.get("/healthz")
 async def healthz():

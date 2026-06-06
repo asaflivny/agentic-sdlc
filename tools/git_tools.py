@@ -68,7 +68,12 @@ async def clone_or_verify_repos(repos_root: str, clone_sources: str) -> dict[str
                 continue
 
             # Clone from source
-            logger.info("repo_init action=clone repo=%s source=%s dest=%s", repo_name, source_path, repo_path)
+            logger.info(
+                "repo_init action=clone repo=%s source=%s dest=%s",
+                repo_name,
+                source_path,
+                repo_path,
+            )
 
             # Create destination directory
             repo_path.mkdir(parents=True, exist_ok=True)
@@ -86,7 +91,11 @@ async def clone_or_verify_repos(repos_root: str, clone_sources: str) -> dict[str
                     # Source is a regular repo, clone with --reference to optimize
                     await _git(["clone", str(source), str(repo_path)])
             else:
-                logger.error("repo_init clone_failed repo=%s source_not_found path=%s", repo_name, source_path)
+                logger.error(
+                    "repo_init clone_failed repo=%s source_not_found path=%s",
+                    repo_name,
+                    source_path,
+                )
                 continue
 
             logger.info("repo_init clone_complete repo=%s", repo_name)
@@ -101,6 +110,7 @@ async def clone_or_verify_repos(repos_root: str, clone_sources: str) -> dict[str
 async def sync_repo(repo_path: str, branch: str) -> ToolResult:
     """Fetch latest changes from remote and checkout branch. Assumes repo is already cloned."""
     import logging
+
     logger = logging.getLogger(__name__)
 
     repo_name = Path(repo_path).name
@@ -131,6 +141,7 @@ async def sync_repo(repo_path: str, branch: str) -> ToolResult:
 
 async def fetch_diff(repo_url: str, before_sha: str, after_sha: str) -> ToolResult:
     import logging
+
     logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
@@ -138,9 +149,11 @@ async def fetch_diff(repo_url: str, before_sha: str, after_sha: str) -> ToolResu
         return ToolResult("", f"Cannot resolve repo at: {repo_url}", is_error=True)
     zeros = "0" * 40
     try:
-        repo_name = repo_url.split('/')[-1]
+        repo_name = repo_url.split("/")[-1]
         if before_sha == zeros:
-            logger.debug("tool_fetch_diff mode=initial_commit sha=%s repo=%s", after_sha[:8], repo_name)
+            logger.debug(
+                "tool_fetch_diff mode=initial_commit sha=%s repo=%s", after_sha[:8], repo_name
+            )
             output = await _git(["show", "--stat", after_sha], git_dir=git_dir)
         else:
             logger.debug(
@@ -161,19 +174,27 @@ async def fetch_diff(repo_url: str, before_sha: str, after_sha: str) -> ToolResu
             logger.debug("tool_fetch_diff success repo=%s size_bytes=%d", repo_name, diff_size)
         return ToolResult("", output[:30000])
     except RuntimeError as e:
-        logger.error("tool_fetch_diff failed repo=%s error=%s", repo_url.split('/')[-1], e)
+        logger.error("tool_fetch_diff failed repo=%s error=%s", repo_url.split("/")[-1], e)
         return ToolResult("", str(e), is_error=True)
 
 
 async def get_file_content(repo_url: str, file_path: str, ref: str) -> ToolResult:
     import logging
+
     logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
-        logger.warning("tool_git_error tool=get_file_content error=repo_not_found repo_url=%s", repo_url)
+        logger.warning(
+            "tool_git_error tool=get_file_content error=repo_not_found repo_url=%s", repo_url
+        )
         return ToolResult("", f"Cannot resolve repo at: {repo_url}", is_error=True)
     try:
-        logger.debug("tool_get_file_content ref=%s file=%s repo=%s", ref[:8], file_path, repo_url.split('/')[-1])
+        logger.debug(
+            "tool_get_file_content ref=%s file=%s repo=%s",
+            ref[:8],
+            file_path,
+            repo_url.split("/")[-1],
+        )
         output = await _git(["show", f"{ref}:{file_path}"], git_dir=git_dir)
         logger.debug("tool_get_file_content success size_bytes=%d", len(output))
         return ToolResult("", output[:20000])
@@ -184,16 +205,23 @@ async def get_file_content(repo_url: str, file_path: str, ref: str) -> ToolResul
 
 async def list_changed_files(repo_url: str, before_sha: str, after_sha: str) -> ToolResult:
     import logging
+
     logger = logging.getLogger(__name__)
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
-        logger.warning("tool_git_error tool=list_changed_files error=repo_not_found repo_url=%s", repo_url)
+        logger.warning(
+            "tool_git_error tool=list_changed_files error=repo_not_found repo_url=%s", repo_url
+        )
         return ToolResult("", f"Cannot resolve repo at: {repo_url}", is_error=True)
     zeros = "0" * 40
     try:
-        repo_name = repo_url.split('/')[-1]
+        repo_name = repo_url.split("/")[-1]
         if before_sha == zeros:
-            logger.debug("tool_list_changed_files mode=initial_commit sha=%s repo=%s", after_sha[:8], repo_name)
+            logger.debug(
+                "tool_list_changed_files mode=initial_commit sha=%s repo=%s",
+                after_sha[:8],
+                repo_name,
+            )
             output = await _git(["show", "--name-status", "--format=", after_sha], git_dir=git_dir)
         else:
             logger.debug(
@@ -202,8 +230,10 @@ async def list_changed_files(repo_url: str, before_sha: str, after_sha: str) -> 
                 after_sha[:8],
                 repo_name,
             )
-            output = await _git(["diff", "--name-status", f"{before_sha}..{after_sha}"], git_dir=git_dir)
-        file_count = len([line for line in output.split('\n') if line.strip()])
+            output = await _git(
+                ["diff", "--name-status", f"{before_sha}..{after_sha}"], git_dir=git_dir
+            )
+        file_count = len([line for line in output.split("\n") if line.strip()])
         logger.debug("tool_list_changed_files success file_count=%d", file_count)
         return ToolResult("", output)
     except RuntimeError as e:
@@ -241,6 +271,7 @@ LIST_FILES = ToolDefinition(
     ],
 )
 
+
 async def analyze_file_history(repo_url: str, file_path: str, max_commits: int = 10) -> ToolResult:
     git_dir = _resolve_git_dir(repo_url)
     if not git_dir:
@@ -265,7 +296,12 @@ FILE_HISTORY = ToolDefinition(
     parameters=[
         ToolParameter("repo_url", "string", "Local path or URL to the git repository"),
         ToolParameter("file_path", "string", "Path to the file within the repository"),
-        ToolParameter("max_commits", "integer", "Maximum number of commits to return (1-30, default 10)", required=False),
+        ToolParameter(
+            "max_commits",
+            "integer",
+            "Maximum number of commits to return (1-30, default 10)",
+            required=False,
+        ),
     ],
 )
 

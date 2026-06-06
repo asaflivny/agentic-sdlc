@@ -1,4 +1,5 @@
 """Tests for DepAuditAgent — mocks httpx OSV responses."""
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +39,7 @@ def _make_context(diff: str = "", files: list[str] | None = None) -> AgentContex
 # ---------------------------------------------------------------------------
 # _extract_added_packages
 # ---------------------------------------------------------------------------
+
 
 def test_extract_pinned_requirement():
     diff = "+requests==2.31.0\n"
@@ -99,7 +101,9 @@ def test_check_osv_returns_finding_for_vulnerable_package():
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        findings = asyncio.run(_check_osv([{"name": "requests", "version": "2.5.0", "ecosystem": "PyPI"}]))
+        findings = asyncio.run(
+            _check_osv([{"name": "requests", "version": "2.5.0", "ecosystem": "PyPI"}])
+        )
 
     assert len(findings) == 1
     assert "requests" in findings[0].title
@@ -118,7 +122,9 @@ def test_check_osv_no_findings_for_clean_package():
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        findings = asyncio.run(_check_osv([{"name": "safe-pkg", "version": "1.0.0", "ecosystem": "PyPI"}]))
+        findings = asyncio.run(
+            _check_osv([{"name": "safe-pkg", "version": "1.0.0", "ecosystem": "PyPI"}])
+        )
 
     assert findings == []
 
@@ -139,6 +145,7 @@ def test_check_osv_api_error_returns_empty():
 # ---------------------------------------------------------------------------
 # DepAuditAgent.run
 # ---------------------------------------------------------------------------
+
 
 def test_agent_skips_when_no_dep_files():
     settings = Settings()

@@ -1,4 +1,5 @@
 """Unit tests for RAGStore."""
+
 import asyncio
 import tempfile
 
@@ -9,6 +10,7 @@ from models.results import Finding, WorkflowResult, AgentResult
 
 def test_rag_store_setup_cleanup():
     """Test that RAGStore initializes and cleans up properly."""
+
     async def _test():
         with tempfile.TemporaryDirectory() as tmpdir:
             store = RAGStore(tmpdir, "sentence-transformers/all-MiniLM-L6-v2")
@@ -22,6 +24,7 @@ def test_rag_store_setup_cleanup():
 
 def test_index_documents():
     """Test indexing documents into a collection."""
+
     async def _test():
         with tempfile.TemporaryDirectory() as tmpdir:
             rag_store = RAGStore(tmpdir, "sentence-transformers/all-MiniLM-L6-v2")
@@ -52,6 +55,7 @@ def test_index_documents():
 
 def test_search_documents():
     """Test searching for documents."""
+
     async def _test():
         with tempfile.TemporaryDirectory() as tmpdir:
             rag_store = RAGStore(tmpdir, "sentence-transformers/all-MiniLM-L6-v2")
@@ -82,6 +86,7 @@ def test_search_documents():
 
 def test_index_findings():
     """Test auto-indexing findings from a workflow result."""
+
     async def _test():
         from datetime import datetime, timezone
 
@@ -127,6 +132,7 @@ def test_index_findings():
 
 def test_clear_collection():
     """Test clearing a collection."""
+
     async def _test():
         with tempfile.TemporaryDirectory() as tmpdir:
             rag_store = RAGStore(tmpdir, "sentence-transformers/all-MiniLM-L6-v2")
@@ -162,6 +168,7 @@ def test_chunk_text():
 
 def test_list_collections():
     """Test listing collections and their document counts."""
+
     async def _test():
         with tempfile.TemporaryDirectory() as tmpdir:
             rag_store = RAGStore(tmpdir, "sentence-transformers/all-MiniLM-L6-v2")

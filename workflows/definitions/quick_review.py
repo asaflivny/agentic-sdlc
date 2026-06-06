@@ -4,7 +4,7 @@ from workflows.base import AgentSpec, ExecutionMode, WorkflowDefinition
 QUICK_REVIEW = WorkflowDefinition(
     name="quick_review",
     description="Single code reviewer that can sub-delegate to security and performance agents. "
-                "Default workflow for feature branches.",
+    "Default workflow for feature branches.",
     mode=ExecutionMode.SEQUENTIAL,
     agent_specs=[
         AgentSpec(

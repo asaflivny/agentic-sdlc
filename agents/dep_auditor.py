@@ -31,11 +31,7 @@ class DepAuditAgent(BaseAgent):
         start = time.monotonic()
         event = context.push_event
 
-        all_changed = [
-            f
-            for commit in event.commits
-            for f in commit.added + commit.modified
-        ]
+        all_changed = [f for commit in event.commits for f in commit.added + commit.modified]
         dep_files = [f for f in all_changed if _DEP_FILE_RE.search(f)]
 
         if not dep_files:
@@ -86,7 +82,7 @@ def _extract_added_packages(diff: str) -> list[dict]:
             continue
 
         # requirements.txt style: package==version, package>=version, etc.
-        m = re.match(r'^([A-Za-z0-9_\-\.]+)\s*[><=!~^]+\s*([A-Za-z0-9_\-\.\*]+)', content)
+        m = re.match(r"^([A-Za-z0-9_\-\.]+)\s*[><=!~^]+\s*([A-Za-z0-9_\-\.\*]+)", content)
         if m:
             name = m.group(1)
             version = m.group(2).lstrip("=")
@@ -96,7 +92,7 @@ def _extract_added_packages(diff: str) -> list[dict]:
             continue
 
         # bare package name on its own line
-        m = re.match(r'^([A-Za-z][A-Za-z0-9_\-\.]{1,49})$', content)
+        m = re.match(r"^([A-Za-z][A-Za-z0-9_\-\.]{1,49})$", content)
         if m:
             name = m.group(1)
             if name not in seen:
@@ -131,24 +127,24 @@ async def _check_osv(packages: list[dict]) -> list[Finding]:
         pkg = packages[i]
         count = len(vulns)
         vuln_ids = ", ".join(v["id"] for v in vulns[:5])
-        summaries = "; ".join(
-            v.get("summary", "") for v in vulns[:3] if v.get("summary")
-        )
+        summaries = "; ".join(v.get("summary", "") for v in vulns[:3] if v.get("summary"))
         desc = (
             f"Package {pkg['name']} ({pkg.get('version', 'unversioned')}) "
             f"has {count} known vulnerability(-ies)."
         )
         if summaries:
             desc += f" Issues: {summaries}"
-        findings.append(Finding(
-            title=f"{pkg['name']}: {count} known CVE(s)",
-            description=desc,
-            severity=Severity.HIGH if count >= 2 else Severity.MEDIUM,
-            file_path=None,
-            recommendation=(
-                f"Upgrade {pkg['name']} to a patched version. "
-                f"CVE IDs: {vuln_ids}. See https://osv.dev/"
-            ),
-        ))
+        findings.append(
+            Finding(
+                title=f"{pkg['name']}: {count} known CVE(s)",
+                description=desc,
+                severity=Severity.HIGH if count >= 2 else Severity.MEDIUM,
+                file_path=None,
+                recommendation=(
+                    f"Upgrade {pkg['name']} to a patched version. "
+                    f"CVE IDs: {vuln_ids}. See https://osv.dev/"
+                ),
+            )
+        )
 
     return findings

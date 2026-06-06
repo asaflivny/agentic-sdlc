@@ -22,15 +22,21 @@ class Settings(BaseSettings):
     # LangGraph agent loop
     agent_recursion_limit: int = 25  # super-steps per agent subgraph (call_model<->tools)
     agent_use_tools: bool = False  # enable the ReAct tool loop (needs a tool-reliable model);
-                                   # off = analyze the pre-fetched diff directly (recommended for small local models)
-    enable_checkpointing: bool = True  # persist graph state for resumable runs; allows recovery from server restarts
+    # off = analyze the pre-fetched diff directly (recommended for small local models)
+    enable_checkpointing: bool = (
+        True  # persist graph state for resumable runs; allows recovery from server restarts
+    )
     checkpoint_db_path: str = "asdlc_checkpoints.db"
 
-    extraction_retry: bool = True  # retry structured extraction once when 0 findings but prose exists
-    diff_chunk_size_kb: int = 25   # split diffs larger than this into overlapping chunks; 0 to disable
+    extraction_retry: bool = (
+        True  # retry structured extraction once when 0 findings but prose exists
+    )
+    diff_chunk_size_kb: int = (
+        25  # split diffs larger than this into overlapping chunks; 0 to disable
+    )
 
-    github_token: str = ""   # post findings as PR review comments when set
-    github_repo: str = ""    # owner/repo — auto-detected from push payload if omitted
+    github_token: str = ""  # post findings as PR review comments when set
+    github_repo: str = ""  # owner/repo — auto-detected from push payload if omitted
 
     webhook_secret: str = ""
     result_webhook_url: str = ""
@@ -56,7 +62,7 @@ class Settings(BaseSettings):
     # Repository management
     repos_root: str = "/repos"  # Local directory where repos are cloned
     git_clone_sources: str = ""  # Comma-separated list of repos to clone on startup
-                                 # Format: "repo_name:source_path" e.g. "inventory-tracker:/local/git/inventory-tracker"
+    # Format: "repo_name:source_path" e.g. "inventory-tracker:/local/git/inventory-tracker"
 
     @property
     def ollama_native_url(self) -> str:

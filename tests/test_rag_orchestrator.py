@@ -1,4 +1,5 @@
 """Integration tests for RAG with WorkflowOrchestrator."""
+
 import tempfile
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch

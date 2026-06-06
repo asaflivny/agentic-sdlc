@@ -47,9 +47,7 @@ class FilePatternRule(RoutingRule):
 
     def matches(self, event: PushEvent) -> bool:
         all_files = [
-            f
-            for commit in event.commits
-            for f in (commit.added + commit.modified + commit.removed)
+            f for commit in event.commits for f in (commit.added + commit.modified + commit.removed)
         ]
         return any(self._pattern.search(f) for f in all_files)
 
@@ -84,7 +82,7 @@ class WorkflowRouter:
                     priority=20,
                     name="sensitive_files",
                     pattern=r"\.(env|pem|key|cert|p12|pfx)$|"
-                            r"(secret|credential|password|token|auth|oauth|jwt)",
+                    r"(secret|credential|password|token|auth|oauth|jwt)",
                     workflow=SECURITY_FOCUS,
                 ),
                 DefaultRule(),
@@ -94,9 +92,7 @@ class WorkflowRouter:
 
     def route(self, event: PushEvent) -> WorkflowDefinition:
         all_files = [
-            f
-            for commit in event.commits
-            for f in (commit.added + commit.modified + commit.removed)
+            f for commit in event.commits for f in (commit.added + commit.modified + commit.removed)
         ]
         logger.debug(
             "routing decision repo=%s branch=%s files_changed=%d",

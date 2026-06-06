@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class RAGDocument(BaseModel):
     """Document stored in RAG knowledge base."""
+
     id: str
     content: str
     metadata: dict = {}
@@ -34,7 +35,9 @@ class RAGStore:
         "code_patterns": "Anti-patterns, refactoring examples, common mistakes",
     }
 
-    def __init__(self, db_path: str, embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(
+        self, db_path: str, embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    ):
         """Initialize RAGStore with Chroma client.
 
         Args:
@@ -67,7 +70,9 @@ class RAGStore:
                     metadata={"hnsw:space": "cosine"},
                 )
 
-            logger.info(f"RAG store initialized with {len(self.collections)} collections at {self.db_path}")
+            logger.info(
+                f"RAG store initialized with {len(self.collections)} collections at {self.db_path}"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize RAG store: {e}")
             raise
@@ -109,11 +114,13 @@ class RAGStore:
 
             ids.append(doc_id)
             texts.append(content)
-            metadatas.append({
-                **metadata,
-                "source": source,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+            metadatas.append(
+                {
+                    **metadata,
+                    "source": source,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
 
         try:
             coll.add(ids=ids, documents=texts, metadatas=metadatas)
@@ -134,21 +141,25 @@ class RAGStore:
         for agent_result in result.agent_results:
             for finding in agent_result.findings:
                 # Build searchable document from finding
-                content = self._format_finding_for_search(finding, result.repo_name, agent_result.agent_name)
+                content = self._format_finding_for_search(
+                    finding, result.repo_name, agent_result.agent_name
+                )
 
-                documents.append({
-                    "content": content,
-                    "metadata": {
-                        "repo": result.repo_name,
-                        "branch": result.branch,
-                        "agent": agent_result.agent_name,
-                        "severity": finding.severity.value,
-                        "title": finding.title,
-                        "file_path": finding.file_path or "",
-                        "run_id": run_id,
-                    },
-                    "source": "finding",
-                })
+                documents.append(
+                    {
+                        "content": content,
+                        "metadata": {
+                            "repo": result.repo_name,
+                            "branch": result.branch,
+                            "agent": agent_result.agent_name,
+                            "severity": finding.severity.value,
+                            "title": finding.title,
+                            "file_path": finding.file_path or "",
+                            "run_id": run_id,
+                        },
+                        "source": "finding",
+                    }
+                )
 
         if documents:
             try:
@@ -156,7 +167,9 @@ class RAGStore:
             except Exception as e:
                 logger.error(f"Failed to index findings from run {run_id}: {e}")
 
-    async def index_file(self, collection: str, file_path: str, chunk_size: int = 500, repo: str = "global"):
+    async def index_file(
+        self, collection: str, file_path: str, chunk_size: int = 500, repo: str = "global"
+    ):
         """Index a markdown or text file, chunking if necessary.
 
         Args:
@@ -166,7 +179,7 @@ class RAGStore:
             repo: Repository scope for metadata
         """
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             logger.error(f"Failed to read file {file_path}: {e}")
@@ -177,19 +190,23 @@ class RAGStore:
 
         documents = []
         for i, chunk in enumerate(chunks):
-            documents.append({
-                "content": chunk,
-                "metadata": {
-                    "repo": repo,
-                    "source_file": Path(file_path).name,
-                    "chunk": i,
-                },
-                "source": "file",
-            })
+            documents.append(
+                {
+                    "content": chunk,
+                    "metadata": {
+                        "repo": repo,
+                        "source_file": Path(file_path).name,
+                        "chunk": i,
+                    },
+                    "source": "file",
+                }
+            )
 
         await self.index_documents(collection, documents)
 
-    async def search(self, collection: str, query: str, limit: int = 5, where: Optional[dict] = None) -> list[dict]:
+    async def search(
+        self, collection: str, query: str, limit: int = 5, where: Optional[dict] = None
+    ) -> list[dict]:
         """Search for documents in a collection.
 
         Args:
@@ -213,18 +230,22 @@ class RAGStore:
             formatted = []
             if results and results["documents"] and results["documents"][0]:
                 for i, doc in enumerate(results["documents"][0]):
-                    formatted.append({
-                        "content": doc,
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "distance": results["distances"][0][i] if results["distances"] else 0,
-                    })
+                    formatted.append(
+                        {
+                            "content": doc,
+                            "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                            "distance": results["distances"][0][i] if results["distances"] else 0,
+                        }
+                    )
 
             return formatted
         except Exception as e:
             logger.error(f"Search failed in {collection}: {e}")
             return []
 
-    async def search_findings_by_repo(self, repo: str, query: str = "", limit: int = 5) -> list[Finding]:
+    async def search_findings_by_repo(
+        self, repo: str, query: str = "", limit: int = 5
+    ) -> list[Finding]:
         """Search for past findings for a specific repository.
 
         Args:
@@ -257,7 +278,9 @@ class RAGStore:
 
         return findings
 
-    async def find_similar_findings(self, finding: Finding, threshold: float = 0.7, limit: int = 5) -> list[dict]:
+    async def find_similar_findings(
+        self, finding: Finding, threshold: float = 0.7, limit: int = 5
+    ) -> list[dict]:
         """Find findings similar to the given one.
 
         Args:

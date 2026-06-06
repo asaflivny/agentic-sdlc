@@ -5,10 +5,27 @@ from workflows.base import AgentSpec, ExecutionMode, WorkflowDefinition
 SECURITY_FOCUS = WorkflowDefinition(
     name="security_focus",
     description="Parallel security + performance review. Triggered when sensitive files "
-                "(secrets, auth, certs) are changed.",
+    "(secrets, auth, certs) are changed.",
     mode=ExecutionMode.PARALLEL,
     agent_specs=[
-        AgentSpec(agent_class=SecurityAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "**/auth/**", "**/crypto/**", "**/config/**", "*.pem", "*.key", "*.crt"]),
-        AgentSpec(agent_class=PerformanceAnalystAgent, file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java"]),
+        AgentSpec(
+            agent_class=SecurityAnalystAgent,
+            file_filter=[
+                "*.py",
+                "*.js",
+                "*.ts",
+                "*.tsx",
+                "**/auth/**",
+                "**/crypto/**",
+                "**/config/**",
+                "*.pem",
+                "*.key",
+                "*.crt",
+            ],
+        ),
+        AgentSpec(
+            agent_class=PerformanceAnalystAgent,
+            file_filter=["*.py", "*.js", "*.ts", "*.tsx", "*.go", "*.rs", "*.java"],
+        ),
     ],
 )

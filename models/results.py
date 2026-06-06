@@ -25,6 +25,7 @@ class Finding(BaseModel):
 
 class FindingList(BaseModel):
     """Container the LLM fills directly via structured output (replaces sentinel parsing)."""
+
     findings: list[Finding] = []
 
 

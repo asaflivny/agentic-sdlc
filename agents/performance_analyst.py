@@ -8,7 +8,9 @@ from tools import git_tools
 class PerformanceAnalystAgent(BaseAgent):
     name = "performance_analyst"
     display_name = "Performance Analyst"
-    description = "Analyzes code for performance bottlenecks, inefficient algorithms, and resource leaks"
+    description = (
+        "Analyzes code for performance bottlenecks, inefficient algorithms, and resource leaks"
+    )
 
     def __init__(self, llm: BaseChatModel, config: Settings, rag_store=None):
         super().__init__(llm, config, rag_store)
