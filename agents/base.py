@@ -15,6 +15,7 @@ from config import Settings
 from models.results import AgentContext, AgentResult, Finding, FindingList
 from tools.base import ToolDefinition
 from tools.langchain_adapter import to_langchain_tool
+from tools import rag_tools
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,17 @@ class BaseAgent(ABC):
     display_name: str
     description: str
 
-    def __init__(self, llm: BaseChatModel, config: Settings):
+    def __init__(self, llm: BaseChatModel, config: Settings, rag_store=None):
         self.llm = llm
         self.config = config
+        self.rag_store = rag_store
         self._tool_definitions: list[ToolDefinition] = []
         self._tool_registry: dict[str, Callable] = {}
         self._agent_tools: list = []
+
+        # Register RAG search tool if enabled
+        if self.config.rag_enabled:
+            self._register_rag_tool()
 
     def _register_tool(self, definition: ToolDefinition, executor: Callable):
         self._tool_definitions.append(definition)
@@ -45,6 +51,11 @@ class BaseAgent(ABC):
         self._agent_tools.append(agent_tool)
         self._tool_definitions.append(agent_tool.definition)
         self._tool_registry[agent_tool.definition.name] = agent_tool.execute
+
+    def _register_rag_tool(self):
+        """Register the search_knowledge tool for RAG queries."""
+        self._tool_definitions.append(rag_tools.SEARCH_KNOWLEDGE)
+        self._tool_registry[rag_tools.SEARCH_KNOWLEDGE.name] = rag_tools.search_knowledge
 
     @abstractmethod
     def get_system_prompt(self) -> str: ...
@@ -69,6 +80,40 @@ class BaseAgent(ABC):
             parts.append(f"\nPrevious analysis:\n{context.additional_context}")
         parts.append("\nPlease perform your analysis now.")
         return "\n".join(parts)
+
+    @staticmethod
+    def _filter_diff_by_files(diff: str, patterns: list[str]) -> str:
+        """Filter diff to only include files matching glob patterns. Returns full diff if patterns is empty."""
+        if not patterns or not diff:
+            return diff
+        from fnmatch import fnmatch
+        lines = diff.split('\n')
+        filtered: list[str] = []
+        current_file: str | None = None
+        in_header = True
+        for line in lines:
+            if line.startswith('diff --git'):
+                in_header = True
+                parts = line.split(' b/')
+                if len(parts) == 2:
+                    current_file = parts[1]
+                    if any(fnmatch(current_file, p) for p in patterns):
+                        filtered.append(line)
+                    else:
+                        current_file = None
+            elif in_header and (line.startswith('index ') or line.startswith('---') or line.startswith('+++') or
+                               line.startswith('old mode') or line.startswith('new mode') or
+                               line.startswith('similarity index') or line.startswith('rename from') or
+                               line.startswith('rename to')):
+                if current_file:
+                    filtered.append(line)
+            elif line.startswith('@@'):
+                in_header = False
+                if current_file:
+                    filtered.append(line)
+            elif current_file:
+                filtered.append(line)
+        return '\n'.join(filtered) if filtered else "(no changes in matching files)"
 
     @staticmethod
     def _coerce_text_tool_call(message: AIMessage, tool_names: set[str]) -> AIMessage:
@@ -106,10 +151,27 @@ class BaseAgent(ABC):
         structured_llm = self.llm.with_structured_output(FindingList)
 
         tool_names = {t.name for t in lc_tools}
+        turn_counter = {"n": 0}
 
         async def call_model(state: AgentState) -> dict:
+            turn_counter["n"] += 1
             response = await llm_with_tools.ainvoke(state["messages"])
             response = self._coerce_text_tool_call(response, tool_names)
+            calls = [c["name"] for c in response.tool_calls] if response.tool_calls else []
+            content_len = len(response.content) if isinstance(response.content, str) else 0
+            logger.info(
+                "agent=%s turn=%d tool_calls=%s content_len=%d",
+                self.name, turn_counter["n"], calls or "none", content_len,
+            )
+            if calls:
+                for call in response.tool_calls:
+                    args_len = len(json.dumps(call.get("args", {})))
+                    logger.debug(
+                        "tool_call agent=%s tool=%s args_bytes=%d",
+                        self.name,
+                        call.get("name"),
+                        args_len,
+                    )
             return {"messages": [response]}
 
         async def extract_findings(state: AgentState) -> dict:
@@ -118,6 +180,11 @@ class BaseAgent(ABC):
                 if isinstance(m, AIMessage) and m.content:
                     summary = m.content if isinstance(m.content, str) else str(m.content)
                     break
+            logger.debug(
+                "extraction_start agent=%s summary_bytes=%d",
+                self.name,
+                len(summary),
+            )
             try:
                 extraction: FindingList = await structured_llm.ainvoke([
                     SystemMessage(content=(
@@ -128,9 +195,43 @@ class BaseAgent(ABC):
                     HumanMessage(content=summary or "No analysis was produced."),
                 ])
                 findings = list(extraction.findings)
+                logger.debug(
+                    "extraction_success agent=%s findings=%d severity_dist=%s",
+                    self.name,
+                    len(findings),
+                    {s: sum(1 for f in findings if f.severity == s) for s in {"critical", "high", "medium", "low", "info"}} if findings else "{}",
+                )
             except Exception as e:
                 logger.warning("agent=%s structured extraction failed: %s", self.name, e)
                 findings = []
+
+            if not findings and summary and self.config.extraction_retry:
+                logger.warning(
+                    "agent=%s extraction returned 0 findings, retrying with explicit JSON prompt summary_bytes=%d",
+                    self.name,
+                    len(summary),
+                )
+                try:
+                    retry_extraction: FindingList = await structured_llm.ainvoke([
+                        SystemMessage(content=(
+                            "You are a JSON extractor. Read the analysis and output ONLY a JSON "
+                            "object matching this schema exactly:\n"
+                            '{"findings": [{"title": str, "description": str, "severity": '
+                            '"critical"|"high"|"medium"|"low"|"info", "file_path": str|null, '
+                            '"line_number": int|null, "recommendation": str}]}\n'
+                            "If there are genuinely no issues, output: {\"findings\": []}"
+                        )),
+                        HumanMessage(content=summary),
+                    ])
+                    findings = list(retry_extraction.findings)
+                    logger.debug(
+                        "extraction_retry_success agent=%s findings=%d",
+                        self.name,
+                        len(findings),
+                    )
+                except Exception as e:
+                    logger.warning("agent=%s retry extraction also failed: %s", self.name, e)
+
             return {"findings": findings, "summary": summary}
 
         def should_continue(state: AgentState) -> str:
@@ -152,16 +253,32 @@ class BaseAgent(ABC):
         else:
             builder.add_edge("call_model", "extract")
         builder.add_edge("extract", END)
-        return builder.compile()
+        return builder
 
     async def run(self, context: AgentContext) -> AgentResult:
         start = time.monotonic()
 
-        for at in self._agent_tools:
-            at.bind_context(context)
-
-        lc_tools = [to_langchain_tool(d, self._tool_registry[d.name]) for d in self._tool_definitions]
-        graph = self._build_graph(lc_tools)
+        # Tool-free by default: the orchestrator pre-fetches the diff into the prompt, so
+        # the agent can analyze it directly in one call → structured extraction, with no
+        # ReAct loop. Small local models thrash on the tool loop (hallucinated repo_url,
+        # huge tool outputs → timeouts). Set agent_use_tools=True for capable models.
+        if self.config.agent_use_tools:
+            for at in self._agent_tools:
+                at.bind_context(context)
+            # Force repo_url to the real local path; the model only sees the repo name and
+            # otherwise passes an unresolvable value to the git tools.
+            # Also pass rag_store for search_knowledge tool.
+            repo_overrides = {
+                "repo_url": context.push_event.repository.clone_url,
+                "rag_store": self.rag_store,
+            }
+            lc_tools = [
+                to_langchain_tool(d, self._tool_registry[d.name], arg_overrides=repo_overrides)
+                for d in self._tool_definitions
+            ]
+        else:
+            lc_tools = []
+        builder = self._build_graph(lc_tools)
 
         system_prompt = self.get_system_prompt()
         initial_message = self._build_initial_message(context)
@@ -174,10 +291,25 @@ class BaseAgent(ABC):
             "summary": "",
         }
 
+        invoke_config: dict = {"recursion_limit": self.config.agent_recursion_limit}
+
         try:
-            final = await graph.ainvoke(
-                init_state, config={"recursion_limit": self.config.agent_recursion_limit}
-            )
+            if self.config.enable_checkpointing:
+                from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+                import hashlib
+
+                # Generate a stable thread_id from agent + repo + diff hash
+                diff_hash = hashlib.md5(context.git_diff.encode()).hexdigest()[:8]
+                thread_id = f"{self.name}_{context.push_event.repository.name}_{context.push_event.after[:8]}_{diff_hash}"
+
+                async with AsyncSqliteSaver.from_conn_string(self.config.checkpoint_db_path) as saver:
+                    graph = builder.compile(checkpointer=saver)
+                    invoke_config["configurable"] = {"thread_id": thread_id}
+                    final = await graph.ainvoke(init_state, config=invoke_config)
+            else:
+                graph = builder.compile()
+                final = await graph.ainvoke(init_state, config=invoke_config)
+
             findings = final.get("findings", [])
             summary = final.get("summary", "")
         except GraphRecursionError:

@@ -37,8 +37,18 @@ A FastAPI webhook server that automatically analyzes git pushes using local LLM 
 │   ├── git_tools.py                # fetch_diff, get_file_content, list_changed_files
 │   ├── agent_tool.py               # AgentTool wrapper for calling agents as sub-agents
 │   └── langchain_adapter.py        # to_langchain_tool() — bridges ToolDefinition → StructuredTool
+├── integrations/
+│   ├── github.py                   # GitHub PR review comments
+│   ├── jenkins.py                  # Jenkins callback, JUnit XML, API integration
+│   └── (email, Slack via main.py notifiers)
 ├── tests/
 │   └── test_security.py            # HMAC validation tests (7 cases)
+├── docs/
+│   └── JENKINS_INTEGRATION.md      # Jenkins integration guide
+├── examples/
+│   ├── Jenkinsfile.groovy          # Example Jenkinsfile
+│   ├── asdlc-shared-library.groovy # Jenkins shared library helper
+│   └── asdlc-webhook-handler.groovy # Example webhook receiver job
 ├── README.md                       # User documentation
 ├── pyproject.toml                  # Dependencies and metadata
 └── .env                            # Local configuration (WEBHOOK_SECRET, OLLAMA_BASE_URL, etc.)
@@ -119,6 +129,35 @@ git push
 # Watch the server logs for the analysis
 ```
 
+## Jenkins Integration
+
+Bi-directional integration with Jenkins:
+
+1. **Jenkins → asdlc**: POST to `/scan` endpoint with repo path and callback URL
+2. **asdlc → Jenkins**: POST findings to callback URL in JUnit XML + JSON format, plus optional Jenkins API calls to set build status
+
+### Quick Start
+
+```groovy
+// In your Jenkinsfile
+@Library('asdlc-shared-library') _
+
+asdlcScan(
+    repo_path: "${WORKSPACE}",
+    branch: "${GIT_BRANCH}",
+    asdlc_url: "http://localhost:8088",
+    asdlc_api_key: "your-api-key",
+    jenkins_api_token: "your-jenkins-token"
+)
+```
+
+Findings are published as:
+- **JUnit XML** — parsed as test failures by Jenkins UI
+- **JSON report** — archived artifact with full details
+- **Build description** — updated via Jenkins API (if token provided)
+
+See [JENKINS_INTEGRATION.md](docs/JENKINS_INTEGRATION.md) for complete setup.
+
 ## Testing
 
 ```sh
@@ -161,6 +200,15 @@ All tool executors must be `async def`. They are wrapped by `to_langchain_tool()
 ### 5. Recursion Limit
 
 `agent_recursion_limit` (default 25) counts LangGraph super-steps, not tool calls. Each `call_model → tools` round is 2 super-steps. A limit of 25 allows ~12 tool-call rounds. If agents hit the limit on complex diffs, raise `AGENT_RECURSION_LIMIT` in `.env`.
+
+### 6. Jenkins Callback Failures
+
+When using Jenkins integration, callback POST may fail if:
+- Jenkins is behind a firewall or NAT (asdlc server cannot reach callback URL)
+- Jenkins webhook token doesn't match configured value in Generic Webhook Trigger plugin
+- Jenkins API token is invalid or lacks Job.EXTENDED_READ permissions
+
+Check asdlc logs for `jenkins callback failed` or `jenkins set_build_status failed` messages. Ensure callback URL is reachable from the asdlc server's network.
 
 ## Adding a New Agent
 
@@ -265,12 +313,34 @@ When working in this codebase, use specialized subagents as follows:
 - **Tracking multi-step implementation work** → use `TaskCreate` to break it into steps and `TaskUpdate` as each step completes.
 - **Checking if an agent change broke the graph** → run `.venv/bin/pytest tests/` first; add an agent-level smoke test if none exists.
 
-## Known Issues (as of 2026-06-03)
+## Known Issues (as of 2026-06-06)
 
 - **Token counting** — `tokens_used` is always 0; LangGraph / Ollama doesn't surface usage in a consistent way across models
 - **Structured extraction on small models** — `qwen2.5-coder:7b` sometimes returns an empty `findings` list from the extract node even when prose is detailed; the `summary` field preserves the prose for manual review
 - **Delegation infinite loop** — `quick_review` can delegate to security/performance via `AgentTool`, but those agents cannot delegate back (only `quick_review` has `can_call` set in its `AgentSpec`)
-- **Checkpointing disabled by default** — `enable_checkpointing = False`; LangGraph graph state is not persisted across server restarts
+
+## Checkpointing & Resumable Runs
+
+Both workflow and agent graphs support **LangGraph checkpointing** for resumable runs. This allows the server to recover mid-analysis after a crash or restart without losing progress.
+
+**How it works:**
+- Each agent run generates a stable `thread_id` based on agent name + repo + commit SHA + diff hash
+- Graph state (messages, findings, intermediate results) is persisted to `checkpoint_db_path` (default: `asdlc_checkpoints.db`)
+- If a run is interrupted, calling `ainvoke` with the same `thread_id` will resume from the last checkpoint
+- Checkpointing is enabled by default (`enable_checkpointing: True` in `config.py`)
+
+**Configuration:**
+```bash
+# Enable/disable checkpointing
+ENABLE_CHECKPOINTING=true
+CHECKPOINT_DB_PATH=asdlc_checkpoints.db
+```
+
+**Behavior:**
+- **Enabled** — each agent/workflow run is saved to the checkpoint DB; safe for production
+- **Disabled** — graphs are not persisted; faster for quick local testing
+
+Checkpointing has negligible performance impact and is recommended for long-running or critical analyses.
 
 ## Performance Tips
 
@@ -322,9 +392,10 @@ When any of these files change, update the corresponding targets **in the same s
 | `workflows/router.py` | Key Design Patterns §2 |
 | `config.py` | Invariants §2 and §5, Performance Tips, Framework Currency Rule table |
 | `pyproject.toml` | Framework Currency Rule table (check new/removed packages) |
-| `main.py` | Running Locally, Known Issues |
+| `main.py` | Running Locally, Known Issues, Jenkins Integration section |
 | `agents/<new_file>.py` | Directory Structure, Adding a New Agent, Invariants §1 |
 | `workflows/definitions/<new_file>.py` | Directory Structure |
+| `integrations/jenkins.py` | Directory Structure, Common Gotchas §6 |
 
 ### README.md
 
@@ -358,5 +429,4 @@ Any new `.py` file in `agents/` or `tools/` that has no corresponding `tests/tes
 - [ ] Multiple model support (fallback, specialized per agent)
 - [ ] Context compression (summarize long findings for sequential mode)
 - [ ] Pluggable rules engine (more flexible routing)
-- [ ] LangGraph checkpointing for resumable agent runs
 - [ ] Structured output retry when extraction returns 0 findings
