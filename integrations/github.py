@@ -183,5 +183,6 @@ def _build_comment(result: "WorkflowResult", total: int) -> str:
             lines.append("")
         lines.append("</details>")
         lines.append("")
-    lines.append(f"<sub>run_id: `{result.repo_name}`</sub>")
+    if result.run_id:
+        lines.append(f"<sub>run_id: `{result.run_id}`</sub>")
     return "\n".join(lines)

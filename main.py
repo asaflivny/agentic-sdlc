@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from config import get_settings
 from models.events import PushEvent, Repository, Pusher
+from models.results import TraceContext
 from rag import RAGStore
 from security import verify_webhook_signature
 from store import WorkflowStore
@@ -171,6 +172,7 @@ def _check_rate_limit(repo_name: str) -> None:
     while window and now - window[0] > 60:
         window.popleft()
     if len(window) >= limit:
+        logger.warning("rate_limit_exceeded repo=%s limit=%d window_size=%d", repo_name, limit, len(window))
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded: max {limit} pushes/minute for repo '{repo_name}'",
@@ -186,8 +188,13 @@ def _check_rate_limit(repo_name: str) -> None:
 @app.post("/git/push", status_code=202, dependencies=[Depends(verify_webhook_signature)])
 async def git_push(event: PushEvent, background_tasks: BackgroundTasks, request: Request):
     _check_rate_limit(event.repository.name)
+    run_id = str(uuid.uuid4())
+    trace = TraceContext.from_workflow(run_id)
+
     logger.info(
-        "push parsed OK repo=%s branch=%s pusher=%s commits=%d head=%s",
+        "push_received run_id=%s workflow_trace=%s repo=%s branch=%s pusher=%s commits=%d head=%s",
+        run_id,
+        trace.workflow_trace_id,
         event.repository.name,
         event.branch,
         event.pusher.name,
@@ -203,7 +210,6 @@ async def git_push(event: PushEvent, background_tasks: BackgroundTasks, request:
             ", ".join(commit.modified) or "none",
         )
     workflow = router.route(event)
-    run_id = str(uuid.uuid4())
 
     # Extract Jenkins params from headers
     jenkins_callback_url = request.headers.get("X-Jenkins-Callback-URL", "")
@@ -214,6 +220,7 @@ async def git_push(event: PushEvent, background_tasks: BackgroundTasks, request:
     background_tasks.add_task(
         _run_workflow,
         run_id,
+        trace,
         workflow,
         event,
         jenkins_callback_url=jenkins_callback_url,
@@ -233,6 +240,7 @@ async def git_push(event: PushEvent, background_tasks: BackgroundTasks, request:
 
 async def _run_workflow(
     run_id: str,
+    trace: TraceContext,
     workflow,
     event: PushEvent,
     jenkins_callback_url: str = "",
@@ -301,7 +309,6 @@ async def _run_workflow(
             )
             logger.info("\n%s", result.overall_summary)
 
-            settings = get_settings()
             if settings.result_webhook_url:
                 await _notify_result(settings.result_webhook_url, run_id, result)
             if settings.slack_webhook_url:
@@ -351,9 +358,14 @@ async def _notify_result(url: str, run_id: str, result) -> None:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(url, json=payload, timeout=10.0)
-            logger.info("result webhook run_id=%s status=%d", run_id, r.status_code)
+            logger.info(
+                "result_webhook_sent run_id=%s status=%d response_bytes=%d",
+                run_id,
+                r.status_code,
+                len(r.content) if r.status_code < 400 else 0,
+            )
     except Exception as e:
-        logger.warning("result webhook failed run_id=%s: %s", run_id, e)
+        logger.warning("result_webhook_failed run_id=%s error=%s", run_id, e)
 
 
 async def _notify_slack(url: str, run_id: str, result) -> None:
@@ -361,13 +373,14 @@ async def _notify_slack(url: str, run_id: str, result) -> None:
         f for r in result.agent_results for f in r.findings if f.severity in ("critical", "high")
     ]
     if not all_findings:
+        logger.debug("slack_notify skipped run_id=%s reason=no_critical_high_findings", run_id)
         return
 
+    total_findings = sum(len(r.findings) for r in result.agent_results)
     severity_icon = {"critical": ":red_circle:", "high": ":orange_circle:"}
     lines = [
         f"*asdlc* — `{result.repo_name}` / `{result.branch}` — "
-        f"{sum(len(r.findings) for r in result.agent_results)} finding(s) "
-        f"({len(all_findings)} critical/high)",
+        f"{total_findings} finding(s) ({len(all_findings)} critical/high)",
     ]
     for f in all_findings[:10]:
         icon = severity_icon.get(f.severity, ":white_circle:")
@@ -381,9 +394,14 @@ async def _notify_slack(url: str, run_id: str, result) -> None:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(url, json=payload, timeout=10.0)
-            logger.info("slack notify run_id=%s status=%d", run_id, r.status_code)
+            logger.info(
+                "slack_webhook_sent run_id=%s status=%d critical_high=%d",
+                run_id,
+                r.status_code,
+                len(all_findings),
+            )
     except Exception as e:
-        logger.warning("slack notify failed run_id=%s: %s", run_id, e)
+        logger.warning("slack_webhook_failed run_id=%s error=%s", run_id, e)
 
 
 async def _notify_email(url: str, recipients_str: str, result) -> None:
@@ -391,6 +409,7 @@ async def _notify_email(url: str, recipients_str: str, result) -> None:
     recipients = [r.strip() for r in recipients_str.split(",")]
     total_findings = sum(len(r.findings) for r in result.agent_results)
     if total_findings == 0:
+        logger.debug("email_notify skipped reason=no_findings recipients=%d", len(recipients))
         return
 
     # Build HTML body
@@ -425,9 +444,14 @@ async def _notify_email(url: str, recipients_str: str, result) -> None:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(url, json=payload, timeout=10.0)
-            logger.info("email notify recipients=%d status=%d", len(recipients), r.status_code)
+            logger.info(
+                "email_webhook_sent recipients=%d status=%d total_findings=%d",
+                len(recipients),
+                r.status_code,
+                total_findings,
+            )
     except Exception as e:
-        logger.warning("email notify failed: %s", e)
+        logger.warning("email_webhook_failed recipients=%d error=%s", len(recipients), e)
 
 
 # ---------------------------------------------------------------------------
@@ -566,60 +590,34 @@ async def list_results(
     agent: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0,
 ):
     """List workflow results with optional filtering by repo, branch, severity, agent, and search text."""
-    runs = await store.list_runs(repo=repo, branch=branch, limit=limit + offset)
+    runs = await store.list_runs(
+        repo=repo, branch=branch, severity=severity, agent=agent, limit=limit
+    )
 
-    # Apply additional filters
-    filtered = []
-    for run in runs[offset:]:
-        if severity or agent or search:
-            # Extract findings from result_json
-            import json as json_lib
+    # Apply search text filter (still in-app since it spans title + description)
+    if search:
+        import json as json_lib
 
+        search_lower = search.lower()
+        filtered = []
+        for run in runs:
             try:
                 data = json_lib.loads(run.get("result_json", "{}"))
-                agent_results = data.get("agent_results", [])
-                run_findings = []
-                for ar in agent_results:
-                    run_findings.extend(ar.get("findings", []))
-
-                # Filter by severity
-                if severity:
-                    run_findings = [
-                        f for f in run_findings if f.get("severity") == severity.lower()
-                    ]
-
-                # Filter by agent
-                if agent:
-                    run_findings = [
-                        f
-                        for ar in agent_results
-                        if agent.lower() in str(ar.get("agent_name", "")).lower()
-                        for f in ar.get("findings", [])
-                    ]
-
-                # Filter by search text
-                if search:
-                    search_lower = search.lower()
-                    run_findings = [
-                        f
-                        for f in run_findings
-                        if search_lower in f.get("title", "").lower()
-                        or search_lower in f.get("description", "").lower()
-                    ]
-
-                if run_findings or not (severity or agent or search):
-                    filtered.append(run)
-            except json_lib.JSONDecodeError as e:
-                logger.warning("Skipping run with corrupted result_json: %s", e)
-            except Exception as e:
-                logger.warning("Error filtering findings for run %s: %s", run.get("run_id"), e)
-        else:
-            filtered.append(run)
-
-    return filtered[:limit]
+                for ar in data.get("agent_results", []):
+                    for f in ar.get("findings", []):
+                        if search_lower in f.get("title", "").lower() or search_lower in f.get(
+                            "description", ""
+                        ).lower():
+                            filtered.append(run)
+                            break
+                    if run in filtered:
+                        break
+            except Exception:
+                pass
+        return filtered
+    return runs
 
 
 @app.get("/results/export/json", dependencies=[Depends(_require_api_key)])
@@ -627,36 +625,53 @@ async def export_results_json(
     repo: Optional[str] = None,
     branch: Optional[str] = None,
     severity: Optional[str] = None,
-    days: int = 30,
+    limit: int = 500,
 ):
-    """Export findings as JSON."""
-    runs = await store.list_runs(repo=repo, branch=branch, limit=1000)
+    """Export findings as JSON (streamed for memory efficiency)."""
     import json as json_lib
 
-    findings_list = []
-    for run in runs:
-        try:
-            data = json_lib.loads(run.get("result_json", "{}"))
-            for ar in data.get("agent_results", []):
-                for finding in ar.get("findings", []):
-                    if severity and finding.get("severity") != severity.lower():
-                        continue
-                    findings_list.append(
-                        {
-                            "run_id": run.get("run_id"),
-                            "repo": run.get("repo"),
-                            "branch": run.get("branch"),
-                            "agent": ar.get("agent_name"),
-                            "timestamp": run.get("completed_at"),
-                            **finding,
-                        }
-                    )
-        except Exception:
-            pass
+    async def generate():
+        yield "["
+        first = True
+        offset = 0
+        page_size = 50
+        while offset < limit:
+            runs = await store.list_runs(repo=repo, branch=branch, limit=min(page_size, limit - offset))
+            if not runs:
+                break
+            for run in runs:
+                try:
+                    data = json_lib.loads(run.get("result_json", "{}"))
+                    for ar in data.get("agent_results", []):
+                        for finding in ar.get("findings", []):
+                            if severity and finding.get("severity") != severity.lower():
+                                continue
+                            item = {
+                                "run_id": run.get("run_id"),
+                                "repo": run.get("repo"),
+                                "branch": run.get("branch"),
+                                "agent": ar.get("agent_name"),
+                                "timestamp": run.get("completed_at"),
+                                **finding,
+                            }
+                            if not first:
+                                yield ","
+                            yield json_lib.dumps(item)
+                            first = False
+                except Exception:
+                    pass
+            offset += len(runs)
+            if len(runs) < page_size:
+                break
+        yield "]"
 
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import StreamingResponse
 
-    return JSONResponse(content=findings_list)
+    return StreamingResponse(
+        generate(),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=findings.json"},
+    )
 
 
 @app.get("/results/export/csv", dependencies=[Depends(_require_api_key)])
@@ -664,61 +679,79 @@ async def export_results_csv(
     repo: Optional[str] = None,
     branch: Optional[str] = None,
     severity: Optional[str] = None,
+    limit: int = 500,
 ):
-    """Export findings as CSV."""
-    runs = await store.list_runs(repo=repo, branch=branch, limit=1000)
+    """Export findings as CSV (streamed for memory efficiency)."""
     import csv
     import io
     import json as json_lib
 
-    output = io.StringIO()
-    writer = csv.DictWriter(
-        output,
-        fieldnames=[
-            "run_id",
-            "repo",
-            "branch",
-            "agent",
-            "severity",
-            "title",
-            "description",
-            "file_path",
-            "line_number",
-            "recommendation",
-            "timestamp",
-        ],
-    )
-    writer.writeheader()
+    async def generate():
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=[
+                "run_id",
+                "repo",
+                "branch",
+                "agent",
+                "severity",
+                "title",
+                "description",
+                "file_path",
+                "line_number",
+                "recommendation",
+                "timestamp",
+            ],
+        )
+        writer.writeheader()
+        yield output.getvalue()
+        output.truncate(0)
+        output.seek(0)
 
-    for run in runs:
-        try:
-            data = json_lib.loads(run.get("result_json", "{}"))
-            for ar in data.get("agent_results", []):
-                for finding in ar.get("findings", []):
-                    if severity and finding.get("severity") != severity.lower():
-                        continue
-                    writer.writerow(
-                        {
-                            "run_id": run.get("run_id"),
-                            "repo": run.get("repo"),
-                            "branch": run.get("branch"),
-                            "agent": ar.get("agent_name"),
-                            "severity": finding.get("severity", ""),
-                            "title": finding.get("title", ""),
-                            "description": finding.get("description", ""),
-                            "file_path": finding.get("file_path", ""),
-                            "line_number": finding.get("line_number", ""),
-                            "recommendation": finding.get("recommendation", ""),
-                            "timestamp": run.get("completed_at", ""),
-                        }
-                    )
-        except Exception:
-            pass
+        offset = 0
+        page_size = 50
+        while offset < limit:
+            runs = await store.list_runs(repo=repo, branch=branch, limit=min(page_size, limit - offset))
+            if not runs:
+                break
+            for run in runs:
+                try:
+                    data = json_lib.loads(run.get("result_json", "{}"))
+                    for ar in data.get("agent_results", []):
+                        for finding in ar.get("findings", []):
+                            if severity and finding.get("severity") != severity.lower():
+                                continue
+                            writer.writerow(
+                                {
+                                    "run_id": run.get("run_id"),
+                                    "repo": run.get("repo"),
+                                    "branch": run.get("branch"),
+                                    "agent": ar.get("agent_name"),
+                                    "severity": finding.get("severity", ""),
+                                    "title": finding.get("title", ""),
+                                    "description": finding.get("description", ""),
+                                    "file_path": finding.get("file_path", ""),
+                                    "line_number": finding.get("line_number", ""),
+                                    "recommendation": finding.get("recommendation", ""),
+                                    "timestamp": run.get("completed_at", ""),
+                                }
+                            )
+                except Exception:
+                    pass
+            chunk = output.getvalue()
+            if chunk:
+                yield chunk
+            output.truncate(0)
+            output.seek(0)
+            offset += len(runs)
+            if len(runs) < page_size:
+                break
 
     from fastapi.responses import StreamingResponse
 
     return StreamingResponse(
-        iter([output.getvalue()]),
+        generate(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=findings.csv"},
     )
@@ -779,7 +812,7 @@ async def rag_search(query: str, collection: str = "best_practices", limit: int 
             "results": results,
         }
     except Exception as e:
-        logger.error(f"RAG search failed: {e}")
+        logger.error("RAG search failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
@@ -815,7 +848,7 @@ async def rag_browse(collection: str = "best_practices", limit: int = 100):
             "documents": documents,
         }
     except Exception as e:
-        logger.error(f"RAG browse failed: {e}")
+        logger.error("RAG browse failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Browse failed: {str(e)}")
 
 

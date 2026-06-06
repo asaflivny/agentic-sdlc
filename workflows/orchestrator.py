@@ -179,6 +179,7 @@ class WorkflowOrchestrator:
             repo_name=event.repository.name,
             branch=event.branch,
             commit_sha=event.after,
+            run_id=run_id or "",
             started_at=started_at,
             completed_at=completed_at,
             agent_results=results,
@@ -265,14 +266,24 @@ class WorkflowOrchestrator:
             if file_filter:
                 git_diff = agent._filter_diff_by_files(git_diff, file_filter)
                 if git_diff == "(no changes in matching files)":
-                    logger.info("agent=%s skipped (no matching files)", agent.name)
+                    logger.info("agent_skipped agent=%s reason=no_matching_files", agent.name)
                     return {"agent_results": []}
 
-            prior_context_len = len(state.get("shared_context", ""))
+            prior_context = state.get("shared_context", "")
+            prior_context_len = len(prior_context)
+            context_truncated = False
+
             context = AgentContext(
                 push_event=state["push_event"],
                 git_diff=git_diff,
-                additional_context=state.get("shared_context", ""),
+                additional_context=prior_context,
+            )
+
+            logger.info(
+                "agent_start agent=%s diff_kb=%d context_bytes=%d",
+                agent.name,
+                len(git_diff) // 1024,
+                prior_context_len,
             )
 
             chunks = self._chunk_diff(git_diff)
@@ -281,25 +292,38 @@ class WorkflowOrchestrator:
             else:
                 result = await self._run_with_timeout(agent, context)
 
-            logger.debug(
-                "agent_completed agent=%s findings=%d duration=%.2fs status=%s",
+            logger.info(
+                "agent_complete agent=%s findings=%d tools=%d llm_calls=%d duration=%.2fs status=%s tools_called=%s",
                 agent.name,
                 len(result.findings),
+                len(result.tool_calls_made),
+                result.llm_call_count,
                 result.duration_seconds or 0,
                 result.status,
+                ",".join(result.tool_calls_made) if result.tool_calls_made else "none",
             )
 
             update: dict = {"agent_results": [result]}
             if sequential and result.status == "success":
                 enrichment = self._format_context_enrichment(agent.display_name, result)
-                updated_context = state.get("shared_context", "") + enrichment
+                updated_context = prior_context + enrichment
+                # Check if next agent will receive truncated context (hardcoded 2000 char limit)
+                if len(updated_context) > 2000:
+                    context_truncated = True
+                    logger.warning(
+                        "context_truncated_next_agent agent=%s current_bytes=%d would_be=%d",
+                        agent.name,
+                        len(updated_context),
+                        2000,
+                    )
                 update["shared_context"] = updated_context
                 logger.debug(
-                    "context_enriched agent=%s prior_context_bytes=%d enrichment_bytes=%d total_bytes=%d",
+                    "context_enriched agent=%s prior_bytes=%d enrichment_bytes=%d total_bytes=%d%s",
                     agent.name,
                     prior_context_len,
                     len(enrichment),
                     len(updated_context),
+                    " (will_truncate)" if context_truncated else "",
                 )
             return update
 
@@ -357,22 +381,20 @@ class WorkflowOrchestrator:
         return ordered
 
     def _chunk_diff(self, diff: str) -> list[str]:
-        """Split a large diff into overlapping chunks. Returns [diff] unchanged when chunking is disabled or unnecessary."""
+        """Split a large diff into non-overlapping chunks. Returns [diff] unchanged when chunking is disabled or unnecessary."""
         chunk_bytes = self.config.diff_chunk_size_kb * 1024
         if chunk_bytes <= 0 or len(diff) <= chunk_bytes:
             return [diff]
-        overlap = max(0, chunk_bytes // 10)  # 10% overlap between consecutive chunks
         chunks: list[str] = []
         offset = 0
         while offset < len(diff):
             chunks.append(diff[offset : offset + chunk_bytes])
-            offset += chunk_bytes - overlap
+            offset += chunk_bytes
         logger.warning(
-            "diff chunking enabled total_size_kb=%d num_chunks=%d chunk_size_kb=%d overlap_kb=%d",
+            "diff chunking enabled total_size_kb=%d num_chunks=%d chunk_size_kb=%d",
             len(diff) // 1024,
             len(chunks),
             self.config.diff_chunk_size_kb,
-            overlap // 1024,
         )
         return chunks
 
@@ -433,12 +455,6 @@ class WorkflowOrchestrator:
     async def _run_with_timeout(self, agent: BaseAgent, context: AgentContext) -> AgentResult:
         import time
 
-        logger.debug(
-            "agent_start agent=%s diff_size_kb=%d context_bytes=%d",
-            agent.name,
-            len(context.git_diff) // 1024,
-            len(context.additional_context),
-        )
         start = time.monotonic()
         try:
             async with asyncio.timeout(self.config.agent_timeout_seconds):
@@ -476,7 +492,7 @@ class WorkflowOrchestrator:
                     logger.debug(
                         "dedup: dropped duplicate finding title='%s' from %s", f.title, r.agent_name
                     )
-            if dropped_count > 0 and len(unique) < len(r.findings):
+            if len(unique) < len(r.findings):
                 logger.debug(
                     "dedup_agent agent=%s original_findings=%d unique_findings=%d dropped=%d",
                     r.agent_name,
@@ -484,7 +500,9 @@ class WorkflowOrchestrator:
                     len(unique),
                     len(r.findings) - len(unique),
                 )
-            deduped.append(r.model_copy(update={"findings": unique}))
+                deduped.append(r.model_copy(update={"findings": unique}))
+            else:
+                deduped.append(r)
         if dropped_count > 0:
             logger.info("dedup_summary total_dropped=%d unique_kept=%d", dropped_count, len(seen))
         return deduped
