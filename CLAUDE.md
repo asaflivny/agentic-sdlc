@@ -66,12 +66,18 @@ START → call_model ──(tool_calls?)──→ tools → call_model (loop)
 ```
 
 1. **`call_model`** — invokes `llm.bind_tools(lc_tools)` with the full message history; after the response, `_coerce_text_tool_call` is applied to promote any tool call the model emitted as a fenced JSON block (qwen2.5-coder quirk) into a real `tool_calls` entry so `ToolNode` can execute it
-2. **`tools`** — LangGraph's built-in `ToolNode` executes tool calls; results appended as `ToolMessage`s
-3. **`extract`** — a second LLM call using `llm.with_structured_output(FindingList)` turns the agent's final prose into typed `Finding` objects; no regex parsing
+2. **`tools`** — LangGraph's built-in `ToolNode` executes tool calls; results appended as `ToolMessage`s; includes git tools, agent delegation tools, and RAG search (when enabled)
+3. **`extract`** — a second LLM call using `llm.with_structured_output(FindingList)` turns the agent's final prose into typed `Finding` objects; no regex parsing; supports retry with explicit JSON schema if first attempt yields 0 findings but prose exists
 
 The loop depth is controlled by `config.agent_recursion_limit` (default 25 super-steps). Hitting it raises `GraphRecursionError`, which is caught and returns 0 findings with a warning log.
 
-Tool executors live in `tools/git_tools.py` and `tools/agent_tool.py`. They return `ToolResult`. `to_langchain_tool()` in `tools/langchain_adapter.py` wraps each `(ToolDefinition, executor)` pair into a LangChain `StructuredTool` consumed by `ToolNode`.
+Tool executors live in `tools/git_tools.py`, `tools/agent_tool.py`, and `tools/rag_tools.py`. They return `ToolResult`. `to_langchain_tool()` in `tools/langchain_adapter.py` wraps each `(ToolDefinition, executor)` pair into a LangChain `StructuredTool` consumed by `ToolNode`. The wrapper supports `arg_overrides` to inject runtime values like `repo_url` and `rag_store`.
+
+**RAG Integration** (when `config.rag_enabled=True`):
+- `BaseAgent` automatically registers the `search_knowledge` tool via `_register_rag_tool()`
+- Tool is wrapped to track retrieved documents in `self._knowledge_retrieved` for audit trails
+- RAG results are formatted as JSON with content snippets (500 chars), metadata, and relevance scores
+- Errors in RAG searches are caught and returned as tool errors; agent can see them and proceed without knowledge
 
 ### 2. Workflow Routing (workflows/router.py)
 
@@ -85,8 +91,8 @@ Rules are sorted by priority; first match wins.
 
 ### 3. Sequential vs. Parallel (workflows/orchestrator.py)
 
-- **Sequential:** Agents run one at a time; each receives `additional_context` from the prior agent's findings (capped at 2000 chars)
-- **Parallel:** All agents run concurrently via `asyncio.gather`; no additional context passed between them
+- **Sequential:** Agents run one at a time; each receives `additional_context` from the prior agent's findings (capped at 2000 chars) plus `shared_context` (RAG knowledge from repository's known issues, seeded at workflow start)
+- **Parallel:** All agents run concurrently via `asyncio.gather`; no additional context passed between them, but all share the same `shared_context` (RAG knowledge seeded from repository)
 
 ### 4. Finding Extraction
 
@@ -178,10 +184,15 @@ In sequential workflows, findings are passed as a string capped at 2000 chars (`
 
 ### 2. Structured Extraction Failures
 
-`with_structured_output` relies on the model supporting tool/function calling or JSON mode. With small local models (`qwen2.5-coder:7b`) the extraction step can return 0 findings even when the agent wrote a valid prose analysis. If this happens consistently:
-- Check logs for `structured extraction failed` warnings
+`with_structured_output` relies on the model supporting tool/function calling or JSON mode. With small local models (`qwen2.5-coder:7b`) the extraction step can return 0 findings even when the agent wrote a valid prose analysis. **Automatic Retry** (when `config.extraction_retry=True`):
+- If the first extraction returns 0 findings but prose exists, a second extraction is triggered with an explicit JSON schema prompt
+- The retry includes the exact Pydantic schema to guide JSON generation
+- If retry also fails, findings remain at 0 but the original prose is preserved in `AgentResult.summary`
+
+If structured extraction consistently fails:
+- Check logs for `structured extraction failed` or `extraction_retry_success` messages
 - Try a larger or more instruction-following model (e.g. `qwen2.5:32b`, `llama3.1:8b`)
-- Inspect the agent's `summary` field in the stored result — the prose is preserved even when extraction fails
+- Inspect the agent's `summary` field in the stored result — the prose is always preserved
 
 ### 2a. Model Emits Tool Calls as Text
 
@@ -195,7 +206,12 @@ Git tools resolve `repo_url` locally (checks for `.git` directory or bare repo).
 
 ### 4. Async Tool Execution
 
-All tool executors must be `async def`. They are wrapped by `to_langchain_tool()` and invoked by LangGraph's `ToolNode`. A sync function will block the event loop. Errors surface as `"ERROR: ..."` strings in tool output rather than exceptions — the agent sees the error and can decide how to proceed.
+All tool executors must be `async def`. They are wrapped by `to_langchain_tool()` and invoked by LangGraph's `ToolNode`. A sync function will block the event loop. This applies to:
+- Git tools (`fetch_diff`, `get_file_content`, `list_changed_files`)
+- Sub-agent delegation tools (`AgentTool.execute`)
+- RAG search tools (`search_knowledge` wrapped in `BaseAgent._register_rag_tool`)
+
+Errors surface as `"ERROR: ..."` strings in tool output rather than exceptions — the agent sees the error and can decide how to proceed. The wrapper in `to_langchain_tool` ensures the coroutine is properly awaited and `ToolResult.is_error` is converted to an error prefix.
 
 ### 5. Recursion Limit
 
@@ -261,10 +277,13 @@ LOG_LEVEL=DEBUG .venv/bin/uvicorn main:app --port 8088
 Watch for:
 - `=== [agent_name] SYSTEM PROMPT ===` — agent's role
 - `=== [agent_name] USER INPUT ===` — initial context + diff preview
-- `=== [agent_name] LLM RESPONSE (turn=N, finish=...) ===` — each LangGraph step
-- `agent=X findings=N` — how many findings structured extraction produced
+- `=== [agent_name] LLM RESPONSE (turn=N, tool_calls=...) ===` — each LangGraph step, shows tool calls if any
+- `agent=X findings=N knowledge_used=K` — how many findings extracted, how many RAG documents retrieved
 - `structured extraction failed` — extraction error (findings will be 0; prose in `summary`)
+- `extraction_retry_success` — retry with explicit JSON schema succeeded after first attempt returned 0 findings
 - `agent=X hit recursion_limit=N` — agent stopped mid-analysis; raise `AGENT_RECURSION_LIMIT`
+- `rag_search_completed collection=... results=N` — RAG search executed successfully
+- `Failed to retrieve knowledge from RAG` — RAG store error (non-fatal; agent proceeds without knowledge)
 
 ### Quick diagnostic commands
 
@@ -293,15 +312,17 @@ curl http://localhost:8088/readyz
 
 1. **New agent = orchestrator registration** — any new `BaseAgent` subclass in `agents/` must be added to `AGENT_REGISTRY` in `workflows/orchestrator.py` in the same edit session.
 
-2. **New config var = `.env` comment** — whenever a field is added to `Settings` in `config.py`, add a commented example to `.env`. The `.env` file is the canonical "what can I configure" reference.
+2. **New config var = `.env` comment** — whenever a field is added to `Settings` in `config.py`, add a commented example to `.env`. The `.env` file is the canonical "what can I configure" reference. Examples: `ENABLE_CHECKPOINTING`, `API_KEY`, `RAG_ENABLED`.
 
-3. **Tool executors must be `async def`** — `to_langchain_tool()` wraps executors with `await`. Sync functions block the event loop.
+3. **Tool executors must be `async def`** — `to_langchain_tool()` wraps executors with `await`. Sync functions block the event loop. This includes RAG search tools wrapped in `BaseAgent._register_rag_tool()`.
 
 4. **30 KB diff cap is intentional** — `fetch_diff` truncates to `[:30000]`. Raising it risks Ollama context overflow. Test with a large repo before increasing.
 
 5. **`get_settings()` is `@lru_cache`** — adding env vars at runtime won't be picked up. Tests that need different settings must construct `Settings()` directly.
 
 6. **Sequential context cap is intentional** — `context.additional_context[:2000]` in orchestrator.py prevents the next agent's prompt from growing unbounded. Compress findings before increasing this limit.
+
+7. **RAG store is optional** — agents accept `rag_store=None` and gracefully degrade. If `config.rag_enabled=True` but no store is provided, tools return errors that agents can see. In production, seed the RAG store before calling `WorkflowOrchestrator`.
 
 ## Claude Code Agent Usage
 
@@ -316,8 +337,9 @@ When working in this codebase, use specialized subagents as follows:
 ## Known Issues (as of 2026-06-06)
 
 - **Token counting** — `tokens_used` is always 0; LangGraph / Ollama doesn't surface usage in a consistent way across models
-- **Structured extraction on small models** — `qwen2.5-coder:7b` sometimes returns an empty `findings` list from the extract node even when prose is detailed; the `summary` field preserves the prose for manual review
+- **Structured extraction on small models** — `qwen2.5-coder:7b` sometimes returns an empty `findings` list even after prose analysis and retry; the `summary` field preserves the prose for manual review. Workaround: use `qwen2.5:32b`, `llama3.1:8b`, or enable `AGENT_USE_TOOLS=false` to avoid complex multi-turn loops
 - **Delegation infinite loop** — `quick_review` can delegate to security/performance via `AgentTool`, but those agents cannot delegate back (only `quick_review` has `can_call` set in its `AgentSpec`)
+- **RAG embedding latency** — first search on a collection triggers embedding model load (~5-10s); subsequent searches are fast. Disable RAG for quick local testing
 
 ## Checkpointing & Resumable Runs
 
@@ -342,12 +364,43 @@ CHECKPOINT_DB_PATH=asdlc_checkpoints.db
 
 Checkpointing has negligible performance impact and is recommended for long-running or critical analyses.
 
+## RAG (Retrieval-Augmented Generation)
+
+The system supports optional RAG to augment agent analysis with domain knowledge.
+
+**How it works:**
+- Each agent automatically registers the `search_knowledge` tool when `config.rag_enabled=True`
+- Before workflow execution, `WorkflowOrchestrator.analyze()` seeds `shared_context` with known issues for the repository (query: repo name, collection: "known_issues")
+- Agents can call `search_knowledge` to query a Chroma vector database by collection name (e.g. "architecture_patterns", "known_issues", "best_practices")
+- Results include content (truncated to 500 chars), metadata (source, tags, etc.), and relevance scores
+- Retrieved documents are tracked in `AgentResult.knowledge_used` for audit trails
+
+**Configuration:**
+```bash
+RAG_ENABLED=true                                    # Enable RAG (default: true)
+RAG_DB_PATH=./asdlc_rag.db                          # Chroma persistent store
+RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2  # HuggingFace embeddings
+RAG_CHUNK_SIZE=500                                  # Characters per document chunk
+RAG_SIMILARITY_THRESHOLD=0.75                       # Threshold for filtering results
+RAG_SEARCH_LIMIT=5                                  # Default results per query
+```
+
+**Seeding the knowledge base** (manual or external):
+- Use the `RAGStore` API in `tools/rag_tools.py` to add documents: `await store.add_documents(collection, documents, metadata)`
+- Collections are isolated (e.g. "architecture_patterns" vs "known_issues")
+- Documents are chunked and embedded on insertion
+- Metadata (source, tags, repo, etc.) is preserved for filtering and audit
+
+If RAG is disabled or the store is unavailable, agents see a graceful error in tool output and proceed without knowledge.
+
 ## Performance Tips
 
 1. **Parallel execution** — `security_focus` runs 2 agents concurrently; watch CPU/memory with large diffs
-2. **Diff size** — diffs are capped at 30 KB; large refactors lose context silently
+2. **Diff size** — diffs are capped at 30 KB; large refactors lose context silently; disable chunking with `DIFF_CHUNK_SIZE_KB=0` if you're seeing timeouts
 3. **Recursion limit** — default 25 super-steps ≈ 12 tool-call rounds per agent; raise `AGENT_RECURSION_LIMIT` for deep analysis
 4. **Model selection** — `qwen2.5-coder:7b` is fast (~8 GB VRAM); try `qwen2.5:32b` or `llama3.1:8b` for better structured-output reliability
+5. **Checkpointing overhead** — checkpoint writes add ~50-100ms per graph step; disable for quick local testing with `ENABLE_CHECKPOINTING=false`
+6. **RAG search latency** — vector similarity search adds ~100-500ms per query depending on database size; disable with `RAG_ENABLED=false` for minimal latency
 
 ## Framework Currency Rule
 
