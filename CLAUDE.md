@@ -65,9 +65,9 @@ START → call_model ──(tool_calls?)──→ tools → call_model (loop)
                   └──(no tools)────→ extract → END
 ```
 
-1. **`call_model`** — invokes `llm.bind_tools(lc_tools)` with the full message history; after the response, `_coerce_text_tool_call` is applied to promote any tool call the model emitted as a fenced JSON block (qwen2.5-coder quirk) into a real `tool_calls` entry so `ToolNode` can execute it
-2. **`tools`** — LangGraph's built-in `ToolNode` executes tool calls; results appended as `ToolMessage`s; includes git tools, agent delegation tools, and RAG search (when enabled)
-3. **`extract`** — a second LLM call using `llm.with_structured_output(FindingList)` turns the agent's final prose into typed `Finding` objects; no regex parsing; supports retry with explicit JSON schema if first attempt yields 0 findings but prose exists
+1. **`call_model`** — invokes `llm.bind_tools(lc_tools)` with the full message history; after the response, `_coerce_text_tool_call` is applied to promote any tool call the model emitted as a fenced JSON block (qwen2.5-coder quirk) into a real `tool_calls` entry so `ToolNode` can execute it. Logs each LLM invocation with `llm_call` event including turn count, tool calls, content length, and token usage.
+2. **`tools`** — wrapped `ToolNode` executes tool calls and tracks which tools are called; results appended as `ToolMessage`s; includes git tools, agent delegation tools, and RAG search (when enabled). Logs executed tools via `tools_executed` event.
+3. **`extract`** — a second LLM call using `llm.with_structured_output(FindingList)` turns the agent's final prose into typed `Finding` objects; no regex parsing; supports retry with explicit JSON schema if first attempt yields 0 findings but prose exists. Extraction retry now logged at **info level** (visible in production).
 
 The loop depth is controlled by `config.agent_recursion_limit` (default 25 super-steps). Hitting it raises `GraphRecursionError`, which is caught and returns 0 findings with a warning log.
 
@@ -78,6 +78,12 @@ Tool executors live in `tools/git_tools.py`, `tools/agent_tool.py`, and `tools/r
 - Tool is wrapped to track retrieved documents in `self._knowledge_retrieved` for audit trails
 - RAG results are formatted as JSON with content snippets (500 chars), metadata, and relevance scores
 - Errors in RAG searches are caught and returned as tool errors; agent can see them and proceed without knowledge
+
+**Observability & Tracing:**
+- `AgentState` tracks `tool_calls_made: list[str]` (unique tools called) and `llm_call_count: int` (LLM invocations in the agentic loop)
+- `AgentResult` includes `tool_calls_made`, `llm_call_count`, `context_received_bytes`, and `context_truncated` flag for full execution visibility
+- Agent completion logged with all metrics: `agent_complete agent=X findings=N tools=K llm_calls=M duration=Ns tools_called=...`
+- Parent-child agent delegation is traceable via `sub_agent_delegated` and `sub_agent_complete` logs with parent and child agent IDs
 
 ### 2. Workflow Routing (workflows/router.py)
 
@@ -305,16 +311,41 @@ Enable verbose logging:
 LOG_LEVEL=DEBUG .venv/bin/uvicorn main:app --port 8088
 ```
 
-Watch for:
+Watch for (in order of execution):
+
+**Workflow entry:**
+- `push_received run_id=<id> workflow_trace=<id>` — correlate all downstream events by `run_id` or `workflow_trace`
+- `routed repo=X branch=Y → workflow=Z` — which workflow matched
+
+**Agent execution:**
+- `agent_start agent=X diff_kb=N context_bytes=M` — agent about to run; context size from prior agents
 - `=== [agent_name] SYSTEM PROMPT ===` — agent's role
 - `=== [agent_name] USER INPUT ===` — initial context + diff preview
-- `=== [agent_name] LLM RESPONSE (turn=N, tool_calls=...) ===` — each LangGraph step, shows tool calls if any
-- `agent=X findings=N knowledge_used=K` — how many findings extracted, how many RAG documents retrieved
-- `structured extraction failed` — extraction error (findings will be 0; prose in `summary`)
-- `extraction_retry_success` — retry with explicit JSON schema succeeded after first attempt returned 0 findings
-- `agent=X hit recursion_limit=N` — agent stopped mid-analysis; raise `AGENT_RECURSION_LIMIT`
+- `llm_call agent=X turn=N tool_calls=... content_len=... tokens=...` — each LLM invocation in the agentic loop
+- `tool_call agent=X tool=Y args_bytes=Z` — specific tool invoked with argument size
+- `tools_executed agent=X tools=fetch_diff,search_knowledge` — tools invoked in this step
+- `extraction_retry agent=X summary_bytes=N` — first extraction returned 0 findings, retrying with explicit schema
+- `extraction_retry_success agent=X findings=N` — retry succeeded after first attempt failed
+- `agent_complete agent=X findings=N tools=K llm_calls=M duration=Ns status=success tools_called=...` — agent finished; shows unique tools called and LLM invocation count
+- `context_enriched agent=X prior_bytes=N enrichment_bytes=M total_bytes=P` — sequential context enrichment
+- `context_truncated_next_agent agent=X current_bytes=N would_be=M` — warning: next agent will receive truncated context
+
+**Sub-agent delegation:**
+- `sub_agent_delegated parent_agent=<id> child_agent=X task_bytes=N` — parent delegated to child
+- `sub_agent_complete parent_agent=<id> child_agent=X findings=N tools=K status=success` — child finished
+- `sub_agent_failed parent_agent=<id> child_agent=X error=...` — child failed; check error
+
+**Knowledge retrieval (RAG):**
 - `rag_search_completed collection=... results=N` — RAG search executed successfully
 - `Failed to retrieve knowledge from RAG` — RAG store error (non-fatal; agent proceeds without knowledge)
+
+**Completion:**
+- `agent_timeout agent=X timeout_sec=30 elapsed_sec=25.5` — agent hit timeout
+- `agent_error agent=X elapsed_sec=10.2 error=...` — agent raised an exception
+- `workflow_persisted run_id=<id> workflow=X repo=Y total_findings=N severity={...}` — all findings persisted
+- `workflow=X done duration=45.3s total_findings=N` — workflow completed
+- `github_summary_comment_posted pr=42 repo=owner/name total_findings=N` — PR comment posted
+- `jenkins_callback_sent run_id=<id> status=200 total_findings=N payload_bytes=...` — Jenkins notified
 
 ### Quick diagnostic commands
 
@@ -374,6 +405,12 @@ When working in this codebase, use specialized subagents as follows:
 - **Delegation infinite loop** — `quick_review` can delegate to security/performance via `AgentTool`, but those agents cannot delegate back (only `quick_review` has `can_call` set in its `AgentSpec`)
 - **RAG embedding latency** — first search on a collection triggers embedding model load (~5-10s); subsequent searches are fast. Disable RAG for quick local testing
 
+**Recent performance improvements (2026-06-06):**
+- Export endpoints now stream to eliminate OOM risk
+- Database filtering at SQL level eliminates N+1 JSON parsing
+- Diff chunks no longer overlap (eliminates redundant analysis)
+- RAG knowledge retrieval merged to single-pass iteration
+
 ## Checkpointing & Resumable Runs
 
 Both workflow and agent graphs support **LangGraph checkpointing** for resumable runs. This allows the server to recover mid-analysis after a crash or restart without losing progress.
@@ -429,11 +466,14 @@ If RAG is disabled or the store is unavailable, agents see a graceful error in t
 ## Performance Tips
 
 1. **Parallel execution** — `security_focus` runs 2 agents concurrently; watch CPU/memory with large diffs
-2. **Diff size** — diffs are capped at 30 KB; large refactors lose context silently; disable chunking with `DIFF_CHUNK_SIZE_KB=0` if you're seeing timeouts
+2. **Diff size & chunking** — diffs capped at 30 KB; chunks are now non-overlapping (no redundant analysis); disable with `DIFF_CHUNK_SIZE_KB=0` if timeouts occur
 3. **Recursion limit** — default 25 super-steps ≈ 12 tool-call rounds per agent; raise `AGENT_RECURSION_LIMIT` for deep analysis
 4. **Model selection** — `qwen2.5-coder:7b` is fast (~8 GB VRAM); try `qwen2.5:32b` or `llama3.1:8b` for better structured-output reliability
 5. **Checkpointing overhead** — checkpoint writes add ~50-100ms per graph step; disable for quick local testing with `ENABLE_CHECKPOINTING=false`
 6. **RAG search latency** — vector similarity search adds ~100-500ms per query depending on database size; disable with `RAG_ENABLED=false` for minimal latency
+7. **Export streaming** — `/results/export/json` and `/results/export/csv` now stream with pagination (50 runs/page, default limit 500); no OOM risk on large exports
+8. **Database filtering** — `/results` endpoint filters by severity/agent at database level (eliminates N+1 JSON parsing); search text still in-app
+9. **RAG efficiency** — knowledge retrieval now single-pass iteration (merge tracking and formatting); no redundant loops
 
 ## Framework Currency Rule
 
